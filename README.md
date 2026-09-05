@@ -22,7 +22,9 @@ for a century. It has simply never been economic at small ticket sizes.
 
 ## The approach
 
-An unpaid invoice is, structurally, a **zero-coupon bond**:
+An unpaid invoice is, structurally, An invoice is issued as an ATS bond with no coupon schedule set, which is economically a
+zero-coupon instrument: the funder's return is the discount to face value, realised at
+maturity.:
 
 | Invoice | Zero-coupon bond |
 |---|---|
@@ -77,16 +79,19 @@ From my own testnet transactions, not from marketing material:
 
 | Operation | HBAR | USD |
 |---|---|---|
-| Transfer | 0.00124353 | $0.0001 |
-| HCS message | 0.00211401 | $0.00017 |
-| Create topic | 0.24870877 | $0.0200 |
+| Issue a receivable (ATS contract deployment) | 7.42171367 | **$0.586** |
+| HBAR/token transfer | 0.00124353 | $0.0001 |
+| HCS lifecycle message | 0.00211401 | $0.00017 |
+
+Issuance dominates because it deploys an EVM contract. Everything after it — status updates,
+transfers, settlement — costs a fraction of a cent.
+
+On a $2,000 invoice, total ledger cost is about **0.03% of face value**, against 2–3% for a
+conventional payment gateway. That ratio is why this works at ticket sizes banks ignore.
 
 Hedera prices fees in USD, so the HBAR amount moves with the exchange rate while the dollar
 cost holds. I measured the same transfer eight days apart at HBAR $0.0650 and $0.0804 — the
 dollar cost matched to four significant figures both times.
-
-Financing a $2,000 invoice costs a fraction of a cent in ledger fees. That is the entire
-reason this works at ticket sizes banks ignore.
 
 ## Roadmap
 
