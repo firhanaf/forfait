@@ -22,9 +22,7 @@ for a century. It has simply never been economic at small ticket sizes.
 
 ## The approach
 
-An unpaid invoice is, structurally, An invoice is issued as an ATS bond with no coupon schedule set, which is economically a
-zero-coupon instrument: the funder's return is the discount to face value, realised at
-maturity.:
+An unpaid invoice is, structurally, a **zero-coupon bond**:
 
 | Invoice | Zero-coupon bond |
 |---|---|
@@ -36,6 +34,10 @@ maturity.:
 So Forfait does not invent a token type. It issues the receivable as a bond through Hedera's
 **Asset Tokenization Studio**, which already implements ERC-1400 with compliance controls,
 corporate actions, and lifecycle management.
+
+ATS has no dedicated zero-coupon type — a bond is issued with no coupon schedule set, which
+is economically equivalent: the funder's return is the discount to face value, realised at
+maturity.
 
 ## Architecture
 
@@ -103,7 +105,7 @@ dollar cost matched to four significant figures both times.
 ## Getting started
 
 ```bash
-git clone https://github.com/<user>/forfait
+git clone https://github.com/firhanaf/forfait
 cd forfait
 npm install
 cp .env.example .env    # fill in Hedera testnet credentials
@@ -115,4 +117,4 @@ See [AI-USAGE.md](./AI-USAGE.md).
 
 ## License
 
-MIT
+See [LICENSE.md](./LICENSE.md).
