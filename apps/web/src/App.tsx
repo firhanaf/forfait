@@ -9,6 +9,10 @@ import {
 const RESOLVER = "0.0.9212226";
 const FACTORY = "0.0.9213391";
 
+const BOND_ID = "0.0.10373584";
+const FUNDER_ID = "0.0.10377457";
+const ISSUER_ID = "0.0.10085748";
+
 const NETWORK_CONFIG = {
   network: "testnet" as const,
   mirrorNode: {
@@ -30,38 +34,44 @@ export default function App() {
   const say = (msg: string) => setLog((prev) => [...prev, msg]);
 
   // ── 1. Init + connect MetaMask
-  async function connect() {
-    try {
-      const config = {
-        ...NETWORK_CONFIG,
-        configuration: { resolverAddress: RESOLVER, factoryAddress: FACTORY },
-      };
+ async function connect() {
+  try {
+    await Network.init(new InitializationRequest({
+      ...NETWORK_CONFIG,
+      configuration: { resolverAddress: RESOLVER, factoryAddress: FACTORY },
+    }));
+    say('Network initialised');
 
-      await Network.init(
-        new InitializationRequest({
-          ...NETWORK_CONFIG,
-          configuration: { resolverAddress: RESOLVER, factoryAddress: FACTORY },
-        }),
-      );
-      say("Network initialised");
+    const wallet = await Network.connect(new ConnectRequest({
+      ...NETWORK_CONFIG,
+      wallet: SupportedWallets.METAMASK,
+      account: {
+        accountId: ISSUER_ID,
+        evmAddress: '0xf73bf13d1d76ec352ddb44ea0427bafa7658c012',
+      },
+    }));
+    say(`Connected: ${JSON.stringify(wallet)}`);
 
-      const wallet = await Network.connect(
-        new ConnectRequest({
-          ...NETWORK_CONFIG,
-          wallet: SupportedWallets.METAMASK,
-        }),
-      );
-      say(`Connected: ${JSON.stringify(wallet)}`);
-      // connect mereset configuration — pasang ulang
-      await Network.init(new InitializationRequest(config));
-      say("Configuration re-applied");
+    // connect() menghapus konfigurasi yang disetel init(), dan init() menghapus akun
+    // yang disetel connect(). setConfig() memulihkan konfigurasi tanpa menyentuh akun.
+    //
+    // SetConfigurationRequest tidak di-export dari index paket, dan field "exports"
+    // di package.json memblokir impor jalur dalam — jadi kelasnya tidak bisa diakses
+    // konsumen sama sekali. setConfig() hanya membaca dua properti dan memanggil
+    // validate(), jadi objek ini memenuhi kontraknya.
+    await Network.setConfig({
+      factoryAddress: FACTORY,
+      resolverAddress: RESOLVER,
+      validate: () => [],
+    } as any);
 
-      setAccount("connected");
-    } catch (e) {
-      say(`ERROR ${String(e)}`);
-      console.error(e);
-    }
+    say(`Config: factory=${await Network.getFactoryAddress()} resolver=${await Network.getResolverAddress()}`);
+    setAccount('connected');
+  } catch (e) {
+    say(`ERROR ${String(e)}`);
+    console.error(e);
   }
+}
 
   // ── 2. Terbitkan bond
   async function createBond() {
@@ -102,8 +112,9 @@ export default function App() {
         externalKycListsIds: [],
         proceedRecipientsIds: [],
         proceedRecipientsData: [],
-        countries: "",
-        info: "",
+        countries: "ID,SG,MY,US,GB,FR,DE,JP,CN",
+        info: "Forfait cross-border receivable",
+        isCountryControlListWhiteList: false,
 
         configId:
           "0x0000000000000000000000000000000000000000000000000000000000000002",
@@ -119,13 +130,91 @@ export default function App() {
     }
   }
 
+  // ── 3. Baca detail bond
+  async function readBond() {
+    try {
+      const { Security, GetSecurityDetailsRequest, GetSecurityHoldersRequest } =
+        await import("@hashgraph/asset-tokenization-sdk");
+
+      const info = await Security.getInfo(
+        new GetSecurityDetailsRequest({ securityId: BOND_ID }),
+      );
+      say(
+        `SUPPLY: ${JSON.stringify(info.totalSupply)} / ${JSON.stringify(info.maxSupply)}`,
+      );
+
+      const holders = await Security.getSecurityHolders(
+        new GetSecurityHoldersRequest({
+          securityId: BOND_ID,
+          start: 0,
+          end: 10,
+        } as any),
+      );
+      say(`HOLDERS: ${JSON.stringify(holders)}`);
+      console.log(info, holders);
+    } catch (e) {
+      say(`ERROR ${String(e)}`);
+      console.error(e);
+    }
+  }
+
+  async function issueUnits() {
+    try {
+      const { Security, IssueRequest } =
+        await import("@hashgraph/asset-tokenization-sdk");
+      const res = await Security.issue(
+        new IssueRequest({
+          securityId: BOND_ID,
+          targetId: ISSUER_ID,
+          amount: "1",
+        }),
+      );
+      say(`ISSUED: ${res.payload} tx=${res.transactionId}`);
+    } catch (e) {
+      say(`ERROR ${String(e)}`);
+      console.error(e);
+    }
+  }
+
+  async function transferToFunder() {
+    try {
+      const { Security, TransferRequest } =
+        await import("@hashgraph/asset-tokenization-sdk");
+      const res = await Security.transfer(
+        new TransferRequest({
+          securityId: BOND_ID,
+          targetId: FUNDER_ID,
+          amount: "1",
+        }),
+      );
+      say(`TRANSFERRED: ${res.payload} tx=${res.transactionId}`);
+    } catch (e) {
+      say(`ERROR ${String(e)}`);
+      console.error(e);
+    }
+  }
+
   return (
     <div style={{ fontFamily: "monospace", padding: 24, lineHeight: 1.6 }}>
       <h1>Forfait — ATS smoke test</h1>
       <button onClick={connect}>1. Connect MetaMask</button>{" "}
-      <button onClick={createBond} disabled={!account}>
-        2. Create bond
+      <button onClick={readBond} disabled={!account}>
+        2. Read bond
+      </button>{" "}
+      <button onClick={issueUnits} disabled={!account}>
+        3. Issue
+      </button>{" "}
+      <button onClick={transferToFunder} disabled={!account}>
+        4. Transfer
       </button>
+      <details style={{ marginTop: 16 }}>
+        <summary style={{ cursor: "pointer", color: "#a00" }}>
+          Buat bond baru (jangan disentuh)
+        </summary>
+        <button onClick={createBond} disabled={!account}>
+          Create bond
+        </button>
+      </details>
       <pre style={{ marginTop: 24, whiteSpace: "pre-wrap" }}>
         {log.join("\n")}
       </pre>

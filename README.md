@@ -117,4 +117,4 @@ See [AI-USAGE.md](./AI-USAGE.md).
 
 ## License
 
-See [LICENSE.md](./LICENSE.md).
+See [LICENSE](./LICENSE).

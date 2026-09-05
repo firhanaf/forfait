@@ -27,3 +27,28 @@ ATS offers a zero-coupon instrument.
 
 Issuance is an EVM contract deployment, so it costs ~$0.59 — not the sub-cent figures of
 native HTS/HCS operations. On a $2,000 invoice that is 0.03% of face value.
+
+## Working connect sequence (day 2)
+
+Three calls, in this exact order. Any other order leaves either the account or the
+configuration empty — see FRICTION.md #1.
+
+```ts
+await Network.init(new InitializationRequest({ ...NETWORK_CONFIG, configuration }));
+
+await Network.connect(new ConnectRequest({
+  ...NETWORK_CONFIG,
+  wallet: SupportedWallets.METAMASK,
+  account: { accountId: '0.0.10085748', evmAddress: '0xf73bf13d1d76ec352ddb44ea0427bafa7658c012' },
+}));
+
+await Network.setConfig({ factoryAddress: FACTORY, resolverAddress: RESOLVER, validate: () => [] } as any);
+```
+
+Verify with `await Network.getFactoryAddress()` — note the `await`, the type says `string` but
+it returns a Promise.
+
+**Still blocked:** `Security.issue()` fails inside `getAccountEvmAddress`. Mirror node has the
+`evm_address`, so the data exists. Next step: read
+`build/esm/src/app/service/account/AccountService.js`.
+

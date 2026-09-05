@@ -7,23 +7,32 @@ time and would cost the next developer the same. Written to be usable as upstrea
 
 ## ATS SDK
 
-### 1. `Network.connect()` silently resets the configuration set by `Network.init()`
+### 1. `Network.init()` and `Network.connect()` destroy each other's state
 
-**Impact:** blocking. `Bond.create()` fails with `Factory not found in request`.
+**Impact:** blocking. No sequence of the two documented calls produces a usable state.
 
-The [SDK integration guide](https://docs.tokenization-studio.hedera.com/ats/developer-guides/sdk-integration)
-shows `Network.init()` with `configuration: { resolverAddress, factoryAddress }`, then
-`Network.connect()` without it. Following that order exactly produces a broken state:
-`Bond.create()` reads `this.networkService.configuration.factoryAddress`, which is now
-undefined.
+- `Network.init(config)` sets factory and resolver, but not the account.
+- `Network.connect(account)` sets the account **and clears the configuration**.
+- Calling `init` again restores the configuration **and clears the account**.
 
-The error blames the *request*, but the request never carries a factory address at all — it
-comes from network configuration. Nothing in the message points at `connect()`.
+The [integration guide](https://docs.tokenization-studio.hedera.com/ats/developer-guides/sdk-integration)
+shows exactly `init` → `connect`, which leaves the configuration empty. `Bond.create()` then
+fails with `Factory not found in request` — blaming the request, which never carries a factory
+at all. Re-initialising fixes creation but breaks `issue` and `transfer`, which fail with
+`GET /api/v1/accounts/0.0.0 → 404` because the account is now empty.
 
-**Workaround:** call `Network.init()` a second time after `Network.connect()`.
+**The SDK already solves this.** `Network.setConfig()` restores the configuration without
+touching the wallet. It is not mentioned anywhere in the integration guide.
 
-**Suggested fix:** have `ConnectRequest` preserve existing configuration, or accept a
-`configuration` field, or make the error message name the real source.
+Working sequence:
+
+```ts
+await Network.init(new InitializationRequest({ ...cfg, configuration }));
+await Network.connect(new ConnectRequest({ ...cfg, wallet, account }));
+await Network.setConfig({ factoryAddress, resolverAddress, validate: () => [] } as any);
+```
+
+**Suggested fix:** document `setConfig`, or stop `connect` from clearing configuration.
 
 ### 2. Timestamps are milliseconds, but nothing says so
 
@@ -159,3 +168,45 @@ This is the most dangerous item here: it makes broken access control look correc
 `TopicMessageSubmitTransaction` with a message over 1024 bytes splits into chunks. The
 receipt returns the first chunk's sequence number, while later chunks are still in flight.
 Querying `TopicInfoQuery` immediately gives an undercount — non-deterministically.
+
+### 13. The MetaMask example omits the required `account` field
+
+**Impact:** blocking, and silent.
+
+The guide's MetaMask example:
+
+```ts
+const connectRequest = new ConnectRequest({ /* network config */, wallet: SupportedWallets.METAMASK });
+```
+
+`ConnectRequest` accepts an optional `account?: RequestAccount`. Omitting it makes
+`Network.connect()` resolve **successfully**, returning `{}` — no error, no warning. Reads keep
+working. Every write then fails with `accounts/0.0.0 → 404`, several layers away from the cause.
+
+Supplying `account: { accountId, evmAddress }` fixes it.
+
+**Suggested fix:** reject a MetaMask connection with no resolvable account, or document the
+field as required for this wallet.
+
+### 14. `SetConfigurationRequest` cannot be imported by consumers at all
+
+`Network.setConfig()` calls `req.validate()`, so a plain object throws
+`args.validate is not a function`. But the class is **not exported from the package index**, and
+the `exports` field in `package.json` blocks the deep path:
+
+The only workaround is an object supplying its own `validate: () => []`.
+
+**Suggested fix:** export it from the index.
+
+### 15. `getFactoryAddress()` and `getResolverAddress()` are typed `string` but return `Promise<string>`
+
+Logging them without `await` prints `[object Promise]`. The declaration in `Network.d.ts` is
+wrong.
+
+### 16. `getAccountEvmAddress` fails on a valid account — open
+
+**Status:** unresolved as of day 2.
+
+The mirror node **does** return `evm_address` for this account. The inner error is an empty
+string being parsed as a Hedera ID somewhere in that path, while the outer message blames the
+account. Same pattern as #1: the error names the wrong thing.
