@@ -3,71 +3,117 @@
 Kept while building Forfait during ETHOnline 2026. Every entry is something that cost real
 time and would cost the next developer the same. Written to be usable as upstream issues.
 
+Entries 1–11 cover the ATS SDK, 12 the monorepo, 13–16 the native Hedera SDK.
+
 ---
 
 ## ATS SDK
 
-### 1. `Network.init()` and `Network.connect()` destroy each other's state
+### 1. `InitializationRequest` silently produces empty configuration unless the plural array forms are supplied
 
-**Impact:** blocking. No sequence of the two documented calls produces a usable state.
+**Impact:** blocking. Cost roughly two days.
 
-- `Network.init(config)` sets factory and resolver, but not the account.
-- `Network.connect(account)` sets the account **and clears the configuration**.
-- Calling `init` again restores the configuration **and clears the account**.
+This is the root cause behind almost everything else in this file.
 
 The [integration guide](https://docs.tokenization-studio.hedera.com/ats/developer-guides/sdk-integration)
-shows exactly `init` → `connect`, which leaves the configuration empty. `Bond.create()` then
-fails with:
-
-```
-An error occurred while creating the bond: Factory not found in request
-```
-
-The message blames the request, which never carries a factory at all — it comes from network
-configuration. Re-initialising fixes creation but breaks `issue` and `transfer`, which then
-fail with `GET /api/v1/accounts/0.0.0 → 404` because the account has been cleared.
-
-**The SDK already solves this.** `Network.setConfig()` restores the configuration without
-touching the wallet. It is not mentioned anywhere in the integration guide.
-
-Working sequence:
+and the [SDK reference](https://docs.tokenization-studio.hedera.com/ats/api/sdk-reference) both
+show initialisation like this:
 
 ```ts
-await Network.init(new InitializationRequest({ ...cfg, configuration }));
-await Network.connect(new ConnectRequest({ ...cfg, wallet, account }));
-await Network.setConfig({ factoryAddress, resolverAddress, validate: () => [] } as any);
+await Network.init(new InitializationRequest({
+  network: "testnet",
+  mirrorNode: { baseUrl, apiKey: "", headerName: "" },
+  rpcNode:    { baseUrl, apiKey: "", headerName: "" },
+  configuration: { resolverAddress: "0.0.xxxx", factoryAddress: "0.0.yyyy" },
+}));
 ```
 
-**Suggested fix:** document `setConfig`, or stop `connect` from clearing configuration.
+That call **succeeds**. No error, no warning. But the configuration is never applied — the
+`walletPaired` event later reports:
 
-### 2. The MetaMask example omits the required `account` field
+```json
+{ "network": { "name": "testnet", "recognized": true, "factoryId": "", "resolverId": "" } }
+```
 
-**Impact:** blocking, and silent.
+Every subsequent failure descends from those two empty strings, and none of the error messages
+mention configuration.
 
-The guide's MetaMask example:
+**What actually works** — taken from `apps/ats/web/src/services/SDKService.ts` in this
+repository, which is the only place the correct shape appears:
 
 ```ts
-const connectRequest = new ConnectRequest({
-  // ...network config...
-  wallet: SupportedWallets.METAMASK,
-});
+await Network.init(new InitializationRequest({
+  network, mirrorNode, rpcNode,
+  events,                                                    // see #2
+  configuration: { factoryAddress, resolverAddress },
+  mirrorNodes:   { nodes: [{ mirrorNode,   environment: network }] },
+  jsonRpcRelays: { nodes: [{ jsonRpcRelay: rpcNode, environment: network }] },
+  factories:     { factories: [{ factory:  factoryAddress,  environment: network }] },
+  resolvers:     { resolvers: [{ resolver: resolverAddress, environment: network }] },
+}));
 ```
 
-`ConnectRequest` declares `account?: RequestAccount` — optional. Omitting it makes
-`Network.connect()` resolve **successfully**, returning `{}`. No error, no warning. Read
-operations keep working. Every write then fails several layers away:
+The plural forms are what the SDK reads. `configuration` appears to be a legacy field that is
+accepted and ignored.
+
+**Suggested fix:** reject an `InitializationRequest` that yields no factory or resolver, rather
+than resolving successfully with empty values. Failing that, document the plural forms — they
+are absent from both the integration guide and the SDK reference.
+
+### 2. `events` handlers are required, and the connected account arrives through them
+
+**Impact:** blocking, and undocumented.
+
+`InitializationRequest` accepts `events?: Partial<WalletEvent>`. The SDK reference lists the
+field but never explains it, and no example supplies it.
+
+Without handlers, `Network.connect()` resolves to `{}` and the SDK has no account. Reads still
+work. Every write fails with `GET /api/v1/accounts/0.0.0 → 404`.
+
+The account is not returned by `connect()` — it arrives asynchronously through `walletPaired`:
+
+```ts
+const walletEvents = {
+  walletFound: (e) => {},
+  walletConnectionStatusChanged: (e) => {},
+  walletDisconnect: (e) => {},
+  walletPaired: (e) => {
+    const accountId = e?.data?.account?.id?.value;   // "0.0.10085748"
+  },
+};
+```
+
+Supplying `account` in `ConnectRequest` — which the type permits — does **not** substitute for
+this. It populates the account object while leaving the signer unset, so writes then fail
+differently:
 
 ```
-GET https://testnet.mirrornode.hedera.com/api/v1/accounts/0.0.0 → 404
-10009 - Value "" does not have the correct format (0.0.0)
+contract runner does not support sending transactions
+(operation="sendTransaction", code=UNSUPPORTED_OPERATION, version=6.17.0)
 ```
 
-Supplying `account: { accountId, evmAddress }` fixes it.
+**Suggested fix:** document that `events` is required for wallet connections, and that the
+account is delivered via `walletPaired`.
 
-**Suggested fix:** reject a MetaMask connection with no resolvable account, or document the
-field as required for this wallet.
+### 3. MetaMask must already be connected to the page before `Network.init()`
 
-### 3. Timestamps are milliseconds, but nothing says so
+**Impact:** blocking, and invisible.
+
+The reference web app gates initialisation on MetaMask's connection state:
+
+```ts
+useEffect(() => {
+  if (isMetamaskConnected) { init(walletEvents); }
+}, [isMetamaskConnected]);
+```
+
+Calling `Network.init()` before `eth_requestAccounts` has resolved leaves the SDK without a
+signer. Nothing reports this. Reads work; writes fail with the ethers `UNSUPPORTED_OPERATION`
+error above, which says nothing about wallet connection order.
+
+**Suggested fix:** document the ordering, or have `connect()` await wallet availability.
+
+### 4. Timestamps are milliseconds, but nothing says so
 
 **Impact:** blocking, misleading error.
 
@@ -83,12 +129,12 @@ milliseconds".
 
 **Suggested fix:** document the unit, and detect second-scale values to emit a targeted hint.
 
-### 4. `regulationType` is typed optional but is required at runtime
+### 5. `regulationType` is typed optional but is required at runtime
 
 **Impact:** blocking.
 
-`CreateBondRequest.d.ts` declares `regulationType?: number`, so TypeScript accepts omitting
-it. `CreateBondCommandHandler` then throws:
+`CreateBondRequest.d.ts` declares `regulationType?: number`, so TypeScript accepts omitting it.
+`CreateBondCommandHandler` then throws:
 
 ```
 An error occurred while creating the bond: Regulation type is missing
@@ -98,7 +144,7 @@ Same for `regulationSubType`.
 
 **Suggested fix:** make the fields required in the type, or default them.
 
-### 5. Valid regulation type/subtype pairs are undocumented
+### 6. Valid regulation type/subtype pairs are undocumented
 
 **Impact:** blocking, requires reading source.
 
@@ -112,7 +158,7 @@ Same for `regulationSubType`.
 | `REG_S` | 1 | `NONE` (0) only |
 | `REG_D` | 2 | `506_B` (1) or `506_C` (2) |
 
-None of this appears in the docs. Passing `REG_S` with subtype `506_B` gives:
+Passing `REG_S` with subtype `506_B` gives:
 
 ```
 Validation for class CreateBondRequest was not successful:
@@ -124,7 +170,7 @@ The error states the rejection without stating the rule.
 
 **Suggested fix:** document the table, and export the enums for consumers.
 
-### 6. Optional array fields must be passed explicitly or the SDK throws on `.length`
+### 7. Optional array fields must be passed explicitly or the SDK throws on `.length`
 
 **Impact:** blocking, opaque error.
 
@@ -140,7 +186,7 @@ No field name, and no stack frame pointing at user code.
 
 **Suggested fix:** default to empty arrays.
 
-### 7. `configId` and `configVersion` are required but absent from the integration guide
+### 8. `configId` and `configVersion` are required but absent from the integration guide
 
 **Impact:** blocking.
 
@@ -153,18 +199,20 @@ An error occurred while creating the bond: Config Id not found in request
 The bond config ID is `0x…0002`. That value is only discoverable from
 `apps/ats/web/.env.example` inside the monorepo — not from the SDK or its documentation.
 
-### 8. `SetConfigurationRequest` cannot be imported by consumers at all
+### 9. Several classes required by public methods are not exported
 
-**Impact:** forces a workaround in every integration that needs `setConfig` (see #1).
+**Impact:** forces workarounds or hardcoded constants in every integration.
 
-`Network.setConfig()` calls `req.validate()`, so a plain object throws:
+| Class | Needed for | Consequence |
+|---|---|---|
+| `SecurityRole` | every `grantRole` / `revokeRole` / `hasRole` call | 30+ role hashes must be copied out of `node_modules` |
+| `SetConfigurationRequest` | `Network.setConfig()` | method is effectively uncallable |
+| `UnpauseRequest` | `Security.unpause()` | `UnpauseRequest is not a constructor` |
 
-```
-TypeError: args.validate is not a function
-```
-
-But the class is **not exported from the package index** — TypeScript reports it missing from
-269 exports — and the `exports` field in `package.json` blocks the deep path:
+`Network.setConfig()` calls `req.validate()`, so a plain object throws
+`args.validate is not a function`. The class is missing from the package index — TypeScript
+reports it absent from 269 exports — and the `exports` field in `package.json` blocks the deep
+path:
 
 ```
 "./build/esm/src/port/in/request/management/SetConfigurationRequest" is not exported
@@ -172,43 +220,40 @@ under the conditions ["module", "browser", "development", "import"] from package
 @hashgraph/asset-tokenization-sdk
 ```
 
-The only workaround is an object supplying its own `validate: () => []`.
+`Security.unpause()` does work when passed a `PauseRequest`, which is exported — but nothing
+documents that.
 
-**Suggested fix:** export it from the index.
+**Suggested fix:** export all request classes and domain enums referenced by public methods.
 
-### 9. `getFactoryAddress()` and `getResolverAddress()` are typed `string` but return `Promise<string>`
+### 10. `getFactoryAddress()` and `getResolverAddress()` are typed `string` but return `Promise<string>`
 
 `Network.d.ts` declares both as returning `string`. Logging them without `await` prints
 `[object Promise]`. The declaration is wrong.
 
-### 10. The SDK requires a browser wallet — no headless path is documented
+### 11. Errors consistently name the wrong cause
 
-**Impact:** architectural surprise.
+**Impact:** this is what turned a configuration mistake into a two-day investigation.
 
-`Network.connect()` supports MetaMask and WalletConnect only. A Node script cannot issue a
-security, which means every integration test or backend job needs a browser. Custodial
-settings (DFNS, Fireblocks, AWS KMS) exist in `ConnectRequest` but are not covered by the
-integration guide.
+Every failure downstream of #1 reported something other than the missing configuration:
 
-### 11. `getAccountEvmAddress` fails on a valid account — open
+| Actual cause | Reported error |
+|---|---|
+| Configuration empty | `Factory not found in request` — blames the request, which never carries a factory |
+| No account resolved | `GET /api/v1/accounts/0.0.0 → 404` |
+| No signer attached | `contract runner does not support sending transactions` |
+| Account lookup with empty input | `EVM address could not be retrieved for 0.0.10085748` — names a valid account, then reports `Value "" does not have the correct format (0.0.0)` |
+| Role never granted | resolved only after the above; roles must be granted explicitly after creation, which no example shows |
 
-**Status:** unresolved as of day 1.
+`MirrorNodeAdapter.accountToEvmAddress` rejects with a bare empty string:
 
-```
-An error occurred while issuing tokens: An error occurred while querying if account has role:
-EVM address could not be retrieved for 0.0.10085748, error: An invalid response was received
-from the server: 10009 - Value "" does not have the correct format (0.0.0)
-```
-
-The mirror node **does** return `evm_address` for this account:
-
-```json
-{ "account": "0.0.10085748", "evm_address": "0xf73bf13d1d76ec352ddb44ea0427bafa7658c012" }
+```js
+else { return Promise.reject(""); }
 ```
 
-The inner error is an empty string being parsed as a Hedera ID somewhere in that path, while
-the outer message blames the account. Same pattern as #1 and #2: the error names the wrong
-thing.
+which surfaces as a Hedera ID format error about `""`, several layers from its origin.
+
+**Suggested fix:** reject with a described error, and surface configuration state in the
+messages that depend on it.
 
 ---
 
@@ -233,13 +278,16 @@ Preceded by:
 AllowanceFacet, AmortizationFacet, BalanceTrackerFacet, ...
 ```
 
-The registry generator appears to emit an empty constants module, so `ATS_ROLES` is typed
-`{}`. Adding `"exclude": ["scripts/**/*", "test/**/*"]` to `tsconfig.build.json` did not
-resolve it.
+The registry generator appears to emit an empty constants module, so `ATS_ROLES` is typed `{}`.
+Adding `"exclude": ["scripts/**/*", "test/**/*"]` to `tsconfig.build.json` did not resolve it.
 
-**Workaround:** skip the monorepo and install `@hashgraph/asset-tokenization-sdk` from npm.
-The factory and resolver are already deployed on testnet, so a local contract build is
-unnecessary for most integrations — but nothing in the documentation says so.
+**Workaround:** skip the monorepo and install `@hashgraph/asset-tokenization-sdk` from npm. The
+factory and resolver are already deployed on testnet, so a local contract build is unnecessary
+for most integrations — but nothing in the documentation says so.
+
+**Worth noting:** `apps/ats/web/src` is the only complete, working example of SDK
+initialisation. Entries 1, 2 and 3 were all resolved by reading it. A build failure therefore
+hides the most useful documentation in the project.
 
 ---
 
