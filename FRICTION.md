@@ -199,36 +199,53 @@ An error occurred while creating the bond: Config Id not found in request
 The bond config ID is `0x…0002`. That value is only discoverable from
 `apps/ats/web/.env.example` inside the monorepo — not from the SDK or its documentation.
 
-### 9. Several classes required by public methods are not exported
+### 9. Classes required by public methods are missing from the package barrel
 
-**Impact:** forces workarounds or hardcoded constants in every integration.
+**Impact:** forces hardcoded constants or unusable methods in every integration.
 
-| Class | Needed for | Consequence |
-|---|---|---|
-| `SecurityRole` | every `grantRole` / `revokeRole` / `hasRole` call | 30+ role hashes must be copied out of `node_modules` |
-| `SetConfigurationRequest` | `Network.setConfig()` | method is effectively uncallable |
-| `UnpauseRequest` | `Security.unpause()` | `UnpauseRequest is not a constructor` |
+`index.d.ts` re-exports `./port/in`, which in turn re-exports `./request`, `./response`
+and the individual ports. Three things public methods depend on fall outside that:
 
-`Network.setConfig()` calls `req.validate()`, so a plain object throws
-`args.validate is not a function`. The class is missing from the package index — TypeScript
-reports it absent from 269 exports — and the `exports` field in `package.json` blocks the deep
-path:
+| Class | Location | Needed for | Consequence |
+|---|---|---|---|
+| `SecurityRole` | `domain/context/security/` | every `grantRole`, `revokeRole`, `hasRole` | outside the exported `port/in` tree entirely; the 30+ role hashes must be copied out of `node_modules` by hand |
+| `SetConfigurationRequest` | `port/in/request/management/` | `Network.setConfig()` | under an exported path but absent from `request/index.d.ts`; TypeScript reports it missing from 269 exports, and `package.json` `exports` blocks the deep path, so the method cannot be called as designed |
+| `UnpauseRequest` | `port/in/request/security/operations/pause/` | `Security.unpause()` | same; `UnpauseRequest is not a constructor` at runtime |
 
+`Security.unpause()` does accept a `PauseRequest`, which is exported — but nothing documents
+that, and the missing class is what a consumer reaches for first.
+
+A related case worth separating: `EventParameter<'walletPaired'>` **is** exported, but does
+not describe the payload. The reference implementation in `apps/ats/web` casts it to `any`
+before reading it, so consumers must declare the shape themselves either way.
+
+**Suggested fix:** re-export the missing request classes from `port/in/request/index.ts`,
+export `SecurityRole`, and give the event payloads real types.
+
+### 10. Exported types do not match the shapes actually returned
+
+**Impact:** compiles cleanly, fails at runtime.
+
+Two instances found while writing a typed client. Both compile, and both are wrong at
+runtime, which is the worst combination: TypeScript actively steers you away from the
+correct code.
+
+**`Network.getFactoryAddress()` and `getResolverAddress()`** are declared `(): string` in
+`Network.d.ts`. They return `Promise<string>`. Logging them without `await` prints
+`[object Promise]`.
+
+**`SecurityViewModel.diamondAddress` and `evmDiamondAddress`** are declared as strings.
+`Security.getInfo()` returns objects:
+
+```json
+{ "diamondAddress": { "value": "0.0.10373584" },
+  "evmDiamondAddress": { "value": "0x13c8ca9a1f58c5e953209477146891dcfcaa8741" } }
 ```
-"./build/esm/src/port/in/request/management/SetConfigurationRequest" is not exported
-under the conditions ["module", "browser", "development", "import"] from package
-@hashgraph/asset-tokenization-sdk
-```
 
-`Security.unpause()` does work when passed a `PauseRequest`, which is exported — but nothing
-documents that.
+Reading `.value` is a type error; not reading it yields an object where a string was
+expected. A consumer has to guard for both shapes to be safe.
 
-**Suggested fix:** export all request classes and domain enums referenced by public methods.
-
-### 10. `getFactoryAddress()` and `getResolverAddress()` are typed `string` but return `Promise<string>`
-
-`Network.d.ts` declares both as returning `string`. Logging them without `await` prints
-`[object Promise]`. The declaration is wrong.
+**Suggested fix:** align the declarations with what the implementations return.
 
 ### 11. Errors consistently name the wrong cause
 
