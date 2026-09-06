@@ -14,7 +14,8 @@
 - `regulationType: 1` (REG_S) requires `regulationSubType: 0` (NONE)
 - `configId` for bonds is `0x…0002`; `configVersion: 1`
 - All optional array fields must be passed as `[]`, not omitted
-- `Network.init()` must be called **again after** `Network.connect()`
+- - ~~`Network.init()` must be called **again after** `Network.connect()`~~
+  **Wrong — this clears the account.** See "Working connect sequence (day 2)" below.
 
 ### On zero-coupon
 
