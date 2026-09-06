@@ -6,26 +6,41 @@ import {
   SupportedWallets,
 } from "@hashgraph/asset-tokenization-sdk";
 
-const RESOLVER = "0.0.9212226";
-const FACTORY = "0.0.9213391";
+const RESOLVER = '0.0.9212226';
+const FACTORY  = '0.0.9213391';
+const NETWORK  = 'testnet';
+
+const MIRROR_NODE = { baseUrl: 'https://testnet.mirrornode.hedera.com/api/v1/', apiKey: '', headerName: '' };
+const RPC_NODE    = { baseUrl: 'https://testnet.hashio.io/api',                 apiKey: '', headerName: '' };
+
+const NETWORK_CONFIG = {
+  network: NETWORK as const,
+  mirrorNode: MIRROR_NODE,
+  rpcNode: RPC_NODE,
+};
+
+
+// Bentuk jamak — inilah yang benar-benar dibaca SDK.
+// `configuration` sendirian menghasilkan factoryId/resolverId kosong.
+const FULL_CONFIG = {
+  ...NETWORK_CONFIG,
+  configuration:  { factoryAddress: FACTORY, resolverAddress: RESOLVER },
+  mirrorNodes:    { nodes: [{ mirrorNode: MIRROR_NODE, environment: NETWORK }] },
+  jsonRpcRelays:  { nodes: [{ jsonRpcRelay: RPC_NODE,  environment: NETWORK }] },
+  factories:      { factories: [{ factory: FACTORY,   environment: NETWORK }] },
+  resolvers:      { resolvers: [{ resolver: RESOLVER, environment: NETWORK }] },
+};
 
 const BOND_ID = "0.0.10373584";
 const FUNDER_ID = "0.0.10377457";
 const ISSUER_ID = "0.0.10085748";
 
-const NETWORK_CONFIG = {
-  network: "testnet" as const,
-  mirrorNode: {
-    baseUrl: "https://testnet.mirrornode.hedera.com/api/v1/",
-    apiKey: "",
-    headerName: "",
-  },
-  rpcNode: {
-    baseUrl: "https://testnet.hashio.io/api",
-    apiKey: "",
-    headerName: "",
-  },
-};
+const ROLES = {
+  ISSUER:            '0x5eeaf5602c75bf26e73b5206d0bd6ee82f621166255e5fd73cc06bc7bd84a95f',
+  PAUSER:            '0x3cb8b459fdb6e7dc3d2a2aa529e530f885d45e03584adb438423209c86a2731f',
+  CONTROLLIST:       '0x6ed9a91e996c6475ecdc28ecbdbe9bd1122fc62b30cdbe6da8271884b51ec74d',
+  MATURITY_REDEEMER: '0x433f48f8aca23480f6ab07666cbc9131d32a0b4672033453f65e18f4dd390523',
+} as const;
 
 export default function App() {
   const [log, setLog] = useState<string[]>([]);
@@ -36,37 +51,36 @@ export default function App() {
   // ── 1. Init + connect MetaMask
  async function connect() {
   try {
+    const eth = (window as any).ethereum;
+    if (!eth) { say('MetaMask tidak ditemukan'); return; }
+
+    const accounts = await eth.request({ method: 'eth_requestAccounts' });
+    say(`MetaMask: ${accounts[0]}`);
+
+    const walletEvents = {
+      walletFound: (e: any) => console.log('walletFound', e),
+      walletConnectionStatusChanged: (e: any) => console.log('statusChanged', e),
+      walletDisconnect: (e: any) => console.log('disconnect', e),
+      walletPaired: (e: any) => {
+        console.log('walletPaired', e);
+        const id = e?.data?.account?.id?.value;
+        const net = e?.network;
+        say(`PAIRED: ${id} | factory=${net?.factoryId} resolver=${net?.resolverId}`);
+        if (id && id !== '0.0.0') setAccount(id);
+      },
+    };
+
     await Network.init(new InitializationRequest({
-      ...NETWORK_CONFIG,
-      configuration: { resolverAddress: RESOLVER, factoryAddress: FACTORY },
-    }));
+      ...FULL_CONFIG,
+      events: walletEvents,
+    } as any));
     say('Network initialised');
 
     const wallet = await Network.connect(new ConnectRequest({
       ...NETWORK_CONFIG,
       wallet: SupportedWallets.METAMASK,
-      account: {
-        accountId: ISSUER_ID,
-        evmAddress: '0xf73bf13d1d76ec352ddb44ea0427bafa7658c012',
-      },
     }));
     say(`Connected: ${JSON.stringify(wallet)}`);
-
-    // connect() menghapus konfigurasi yang disetel init(), dan init() menghapus akun
-    // yang disetel connect(). setConfig() memulihkan konfigurasi tanpa menyentuh akun.
-    //
-    // SetConfigurationRequest tidak di-export dari index paket, dan field "exports"
-    // di package.json memblokir impor jalur dalam — jadi kelasnya tidak bisa diakses
-    // konsumen sama sekali. setConfig() hanya membaca dua properti dan memanggil
-    // validate(), jadi objek ini memenuhi kontraknya.
-    await Network.setConfig({
-      factoryAddress: FACTORY,
-      resolverAddress: RESOLVER,
-      validate: () => [],
-    } as any);
-
-    say(`Config: factory=${await Network.getFactoryAddress()} resolver=${await Network.getResolverAddress()}`);
-    setAccount('connected');
   } catch (e) {
     say(`ERROR ${String(e)}`);
     console.error(e);
@@ -152,6 +166,7 @@ export default function App() {
       );
       say(`HOLDERS: ${JSON.stringify(holders)}`);
       console.log(info, holders);
+      say(`SUPPLY: ${info.totalSupply} / ${info.maxSupply} | paused=${info.paused}`);
     } catch (e) {
       say(`ERROR ${String(e)}`);
       console.error(e);
@@ -194,6 +209,37 @@ export default function App() {
     }
   }
 
+  async function pauseSecurity() {
+  try {
+    const { Security, PauseRequest } = await import('@hashgraph/asset-tokenization-sdk');
+    const res = await Security.pause(new PauseRequest({ securityId: BOND_ID }));
+    say(`PAUSED: ${JSON.stringify(res)}`);
+  } catch (e) { say(`ERROR ${String(e)}`); console.error(e); }
+}
+
+async function unpauseSecurity() {
+  try {
+    const { Security, PauseRequest } = await import('@hashgraph/asset-tokenization-sdk');
+    const res = await Security.unpause(new PauseRequest({ securityId: BOND_ID }));
+    say(`UNPAUSED: ${JSON.stringify(res)}`);
+  } catch (e) { say(`ERROR ${String(e)}`); console.error(e); }
+}
+
+async function grantRoles() {
+  try {
+    const { Role, RoleRequest } = await import('@hashgraph/asset-tokenization-sdk');
+
+    for (const [label, role] of Object.entries(ROLES)) {
+      const res = await Role.grantRole(new RoleRequest({
+        securityId: BOND_ID,
+        targetId: ISSUER_ID,
+        role,
+      }));
+      say(`GRANTED ${label}: ${res.payload}`);
+    }
+  } catch (e) { say(`ERROR ${String(e)}`); console.error(e); }
+}
+
   return (
     <div style={{ fontFamily: "monospace", padding: 24, lineHeight: 1.6 }}>
       <h1>Forfait — ATS smoke test</h1>
@@ -201,12 +247,21 @@ export default function App() {
       <button onClick={readBond} disabled={!account}>
         2. Read bond
       </button>{" "}
+      <button onClick={grantRoles} disabled={!account}>
+        2b. Grant roles
+        </button>{" "}
       <button onClick={issueUnits} disabled={!account}>
         3. Issue
       </button>{" "}
       <button onClick={transferToFunder} disabled={!account}>
         4. Transfer
-      </button>
+      </button>{" "}
+      <button onClick={pauseSecurity} disabled={!account}>
+        5. Pause
+      </button>{" "}
+      <button onClick={unpauseSecurity} disabled={!account}>
+        6. Unpause
+      </button>{" "}
       <details style={{ marginTop: 16 }}>
         <summary style={{ cursor: "pointer", color: "#a00" }}>
           Buat bond baru (jangan disentuh)
