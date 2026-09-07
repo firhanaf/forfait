@@ -224,4 +224,13 @@ describe("mapping to ATS", () => {
     const long = invoice({ dueAt: new Date("2026-12-31T00:00:00Z") });
     expect(() => toBondParams(long, "0.0.10085748")).toThrow(/60 days or less/);
   });
+
+  it("asks for a document before complaining about its shape", () => {
+    expect(validate({ ...invoice(), documentHash: "" })).toContain(
+      "an invoice document is required",
+    );
+    expect(validate({ ...invoice(), documentHash: "sha256:xyz" })).toContain(
+      "document hash must be sha256:<64 hex chars>",
+    );
+  });
 });

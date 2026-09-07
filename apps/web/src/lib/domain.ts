@@ -11,15 +11,21 @@
 // Model
 // ─────────────────────────────────────────────────────────────
 
-export const STATUSES = ['SUBMITTED', 'VERIFIED', 'FUNDED', 'PAID', 'SETTLED'] as const;
+export const STATUSES = [
+  "SUBMITTED",
+  "VERIFIED",
+  "FUNDED",
+  "PAID",
+  "SETTLED",
+] as const;
 export type Status = (typeof STATUSES)[number];
 
 /** Transitions that are allowed. Anything else is a bug or an attack. */
 const NEXT: Record<Status, Status[]> = {
-  SUBMITTED: ['VERIFIED'],
-  VERIFIED: ['FUNDED'],
-  FUNDED: ['PAID'],
-  PAID: ['SETTLED'],
+  SUBMITTED: ["VERIFIED"],
+  VERIFIED: ["FUNDED"],
+  FUNDED: ["PAID"],
+  PAID: ["SETTLED"],
   SETTLED: [],
 };
 
@@ -36,7 +42,7 @@ export interface Invoice {
   debtorCountry: string;
   /** Amount owed, in minor units. 200000 = USD 2,000.00 */
   faceValueMinor: number;
-  currency: 'USD' | 'SGD' | 'EUR';
+  currency: "USD" | "SGD" | "EUR";
   issuedAt: Date;
   /** Maturity. The client pays on this date; the funder is repaid from it. */
   dueAt: Date;
@@ -58,20 +64,32 @@ export interface Invoice {
  */
 export const MAX_TERM_DAYS = 60;
 
-export const termDays = (invoice: Pick<Invoice, 'issuedAt' | 'dueAt'>): number =>
-  Math.ceil((invoice.dueAt.getTime() - invoice.issuedAt.getTime()) / 86_400_000);
+export const termDays = (
+  invoice: Pick<Invoice, "issuedAt" | "dueAt">,
+): number =>
+  Math.ceil(
+    (invoice.dueAt.getTime() - invoice.issuedAt.getTime()) / 86_400_000,
+  );
 
 export function validate(invoice: Invoice): string[] {
   const errors: string[] = [];
   const days = termDays(invoice);
 
-  if (days <= 0) errors.push('due date must be after the issue date');
-  if (days > MAX_TERM_DAYS) {
-    errors.push(`term is ${days} days; Forfait accepts ${MAX_TERM_DAYS} days or less`);
+  if (!invoice.documentHash) {
+    errors.push("an invoice document is required");
+  } else if (!/^sha256:[0-9a-f]{64}$/.test(invoice.documentHash)) {
+    errors.push("document hash must be sha256:<64 hex chars>");
   }
-  if (invoice.faceValueMinor <= 0) errors.push('face value must be positive');
+
+  if (days <= 0) errors.push("due date must be after the issue date");
+  if (days > MAX_TERM_DAYS) {
+    errors.push(
+      `term is ${days} days; Forfait accepts ${MAX_TERM_DAYS} days or less`,
+    );
+  }
+  if (invoice.faceValueMinor <= 0) errors.push("face value must be positive");
   if (!/^sha256:[0-9a-f]{64}$/.test(invoice.documentHash)) {
-    errors.push('document hash must be sha256:<64 hex chars>');
+    errors.push("document hash must be sha256:<64 hex chars>");
   }
   return errors;
 }
@@ -93,8 +111,12 @@ export function validate(invoice: Invoice): string[] {
 export function discount(
   faceValueMinor: number,
   days: number,
-  annualRate: number
-): { proceedsMinor: number; discountMinor: number; effectiveAnnualReturn: number } {
+  annualRate: number,
+): {
+  proceedsMinor: number;
+  discountMinor: number;
+  effectiveAnnualReturn: number;
+} {
   const factor = 1 - (annualRate * days) / 360;
   const proceedsMinor = Math.floor(faceValueMinor * factor);
   const discountMinor = faceValueMinor - proceedsMinor;
@@ -106,7 +128,9 @@ export function discount(
 }
 
 export const formatMinor = (minor: number, currency: string): string =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
+  new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
+    minor / 100,
+  );
 
 // ─────────────────────────────────────────────────────────────
 // ISIN
@@ -125,9 +149,9 @@ export function syntheticIsin(reference: string): string {
   // 9 alphanumeric characters derived from the reference, padded deterministically.
   const body = reference
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
+    .replace(/[^A-Z0-9]/g, "")
     .slice(-9)
-    .padStart(9, '0');
+    .padStart(9, "0");
 
   const base = `XF${body}`;
   return base + isinCheckDigit(base);
@@ -137,7 +161,7 @@ export function syntheticIsin(reference: string): string {
 function isinCheckDigit(base: string): number {
   const digits = [...base]
     .map((c) => (/[0-9]/.test(c) ? c : (c.charCodeAt(0) - 55).toString()))
-    .join('');
+    .join("");
 
   let sum = 0;
   let double = true; // rightmost digit of the base is doubled
@@ -159,7 +183,8 @@ function isinCheckDigit(base: string): number {
 
 /** ISO 4217 code as the 3-byte hex ATS expects. 'USD' → '0x555344' */
 const currencyHex = (code: string): string =>
-  '0x' + [...code].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+  "0x" +
+  [...code].map((c) => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
 
 /**
  * Regulation S governs securities offered outside the United States, and requires a
@@ -181,20 +206,23 @@ const SUBTYPE_NONE = 0;
  */
 export function toBondParams(invoice: Invoice, ownerAccountId: string) {
   const errors = validate(invoice);
-  if (errors.length) throw new Error(errors.join('; '));
+  if (errors.length) throw new Error(errors.join("; "));
 
   const start = Date.now() + 5 * 60 * 1000;
   const maturity = invoice.dueAt.getTime();
 
   return {
     name: `Receivable ${invoice.reference}`,
-    symbol: invoice.reference.replace(/[^A-Z0-9]/gi, '').slice(-8).toUpperCase(),
+    symbol: invoice.reference
+      .replace(/[^A-Z0-9]/gi, "")
+      .slice(-8)
+      .toUpperCase(),
     isin: syntheticIsin(invoice.reference),
     decimals: 0,
 
     // One invoice, one indivisible unit. Raising numberOfUnits would let several funders
     // finance a single receivable — a real feature, deliberately out of scope for now.
-    numberOfUnits: '1',
+    numberOfUnits: "1",
 
     currency: currencyHex(invoice.currency),
     nominalValue: String(invoice.faceValueMinor),
@@ -232,7 +260,8 @@ export function toBondParams(invoice: Invoice, ownerAccountId: string) {
     // Bond configuration, pinned. Leaving the version empty resolves to whatever is
     // latest at submit time, which would let a demo recorded today behave differently
     // when a judge runs it next week.
-    configId: '0x0000000000000000000000000000000000000000000000000000000000000002',
+    configId:
+      "0x0000000000000000000000000000000000000000000000000000000000000002",
     configVersion: 1,
   };
 }
