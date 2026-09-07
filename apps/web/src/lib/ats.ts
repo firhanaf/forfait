@@ -6,6 +6,7 @@
 // all be true before a single write succeeds — see FRICTION.md #1, #2 and #3. Changing
 // the order or dropping a field fails silently: reads keep working and writes fail with
 // errors that name something else entirely.
+
 import type {
   SecurityViewModel,
   WalletEvent,
@@ -69,6 +70,13 @@ export const ROLES = {
     "0x433f48f8aca23480f6ab07666cbc9131d32a0b4672033453f65e18f4dd390523",
 } as const;
 
+/**
+ * `SecurityViewModel` types these as strings, but the runtime returns `{ value }`.
+ * `Bond.create` returns the same shape for the new security's address. FRICTION.md #10.
+ */
+const idOf = (v: unknown): string =>
+  typeof v === "string" ? v : ((v as { value?: string })?.value ?? "");
+
 // ─────────────────────────────────────────────────────────────
 // Connection
 // ─────────────────────────────────────────────────────────────
@@ -114,7 +122,7 @@ export async function connectWallet(
     method: "eth_requestAccounts",
   })) as string[];
 
-  const paired = new Promise<Connection>((resolve, reject) => {
+  return new Promise<Connection>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error("wallet did not pair within 30 seconds")),
       30_000,
@@ -127,7 +135,7 @@ export async function connectWallet(
       walletPaired: (e) => {
         onEvent?.("walletPaired", e);
 
-        // The SDK's own type carries no structure here — see the note on WalletPairedEvent.
+        // The SDK's own type carries no structure here — see WalletPairedEvent above.
         const paired = e as WalletPairedEvent;
         const accountId = paired.data?.account?.id?.value;
 
@@ -170,8 +178,6 @@ export async function connectWallet(
         reject(e);
       });
   });
-
-  return paired;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -191,16 +197,14 @@ export interface SecurityInfo {
   evmDiamondAddress: string;
 }
 
-/** SecurityViewModel types these as strings, but the runtime returns { value }. */
-const idOf = (v: unknown): string =>
-  typeof v === "string" ? v : ((v as { value?: string })?.value ?? "");
-
 export async function getSecurity(securityId: string): Promise<SecurityInfo> {
-  const { Security, GetSecurityDetailsRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Security, GetSecurityDetailsRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   const info = (await Security.getInfo(
     new GetSecurityDetailsRequest({ securityId }),
   )) as SecurityViewModel;
+
   return {
     name: info.name ?? "",
     symbol: info.symbol ?? "",
@@ -216,8 +220,9 @@ export async function getSecurity(securityId: string): Promise<SecurityInfo> {
 }
 
 export async function getHolders(securityId: string): Promise<string[]> {
-  const { Security, GetSecurityHoldersRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Security, GetSecurityHoldersRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   return Security.getSecurityHolders(
     // The exported type omits the pagination parameters the runtime requires.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -251,8 +256,9 @@ export async function grantRole(
   targetId: string,
   role: string,
 ): Promise<TxResult> {
-  const { Role, RoleRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Role, RoleRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   return asResult(
     await Role.grantRole(new RoleRequest({ securityId, targetId, role })),
   );
@@ -276,11 +282,52 @@ export async function issue(
   targetId: string,
   amount: string,
 ): Promise<TxResult> {
-  const { Security, IssueRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Security, IssueRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   return asResult(
     await Security.issue(new IssueRequest({ securityId, targetId, amount })),
   );
+}
+
+/**
+ * Issues a new receivable. Three phases, six wallet prompts: deploy the security, grant
+ * the operational roles the creator does not receive automatically, then mint the single
+ * unit that represents the invoice.
+ *
+ * Creating a security grants DEFAULT_ADMIN_ROLE only. Without ISSUER the mint that
+ * follows fails with "the account trying to perform the operation doesn't have the
+ * needed role", naming a role hash rather than the role.
+ */
+export async function createReceivable(
+  params: Record<string, unknown>,
+  ownerAccountId: string,
+  onStep?: (label: string) => void,
+): Promise<string> {
+  const { Bond, CreateBondRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
+
+  onStep?.("Deploying security…");
+
+  // CreateBondRequest's constructor type does not match what the runtime requires;
+  // toBondParams() produces the shape that works. See FRICTION.md #5, #7 and #8.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const res = (await Bond.create(new CreateBondRequest(params as any))) as any;
+
+  const securityId = idOf(res?.security?.diamondAddress);
+  if (!securityId) throw new Error("no security id returned");
+  onStep?.(`Deployed ${securityId}`);
+
+  await grantOperationalRoles(securityId, ownerAccountId, (label) =>
+    onStep?.(`Granted ${label}`),
+  );
+
+  onStep?.("Minting the unit…");
+  await issue(securityId, ownerAccountId, "1");
+  onStep?.("Done");
+
+  return securityId;
 }
 
 /** Moves the receivable to a funder. */
@@ -289,8 +336,9 @@ export async function transfer(
   targetId: string,
   amount: string,
 ): Promise<TxResult> {
-  const { Security, TransferRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Security, TransferRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   return asResult(
     await Security.transfer(
       new TransferRequest({ securityId, targetId, amount }),
@@ -300,15 +348,17 @@ export async function transfer(
 
 /** Halts all transfers. Used when a receivable is disputed. */
 export async function pause(securityId: string): Promise<TxResult> {
-  const { Security, PauseRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Security, PauseRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   return asResult(await Security.pause(new PauseRequest({ securityId })));
 }
 
 /** `UnpauseRequest` is not exported; `PauseRequest` carries the same shape. FRICTION.md #9. */
 export async function unpause(securityId: string): Promise<TxResult> {
-  const { Security, PauseRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Security, PauseRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   return asResult(await Security.unpause(new PauseRequest({ securityId })));
 }
 
@@ -317,8 +367,9 @@ export async function redeemAtMaturity(
   securityId: string,
   sourceId: string,
 ): Promise<TxResult> {
-  const { Bond, FullRedeemAtMaturityRequest } =
-    await import("@hashgraph/asset-tokenization-sdk");
+  const { Bond, FullRedeemAtMaturityRequest } = await import(
+    "@hashgraph/asset-tokenization-sdk"
+  );
   return asResult(
     await Bond.fullRedeemAtMaturity(
       new FullRedeemAtMaturityRequest({ securityId, sourceId }),
