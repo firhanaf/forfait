@@ -1,278 +1,248 @@
-import { useState } from "react";
-import {
-  Network,
-  InitializationRequest,
-  ConnectRequest,
-  SupportedWallets,
-} from "@hashgraph/asset-tokenization-sdk";
+// apps/web/src/App.tsx
+import { useEffect, useRef, useState } from 'react';
+import './styles.css';
+import { connectWallet, hashscan, type Connection } from './lib/ats';
+import { IssueView } from './views/IssueView';
+import { FundView } from './views/FundView';
+import { DebugView } from './views/DebugView';
 
-const RESOLVER = '0.0.9212226';
-const FACTORY  = '0.0.9213391';
-const NETWORK  = 'testnet';
+type Tab = 'issue' | 'fund' | 'debug';
 
-const MIRROR_NODE = { baseUrl: 'https://testnet.mirrornode.hedera.com/api/v1/', apiKey: '', headerName: '' };
-const RPC_NODE    = { baseUrl: 'https://testnet.hashio.io/api',                 apiKey: '', headerName: '' };
+/**
+ * Set when the user disconnects on purpose.
+ *
+ * Disconnecting in a dapp cannot revoke anything: MetaMask still lists the site under
+ * Connected sites, and `eth_accounts` still returns the account. Without this flag the
+ * silent re-pair below would undo the click on the next reload, and the button would
+ * look broken. So the intent is remembered here instead.
+ */
+const DISCONNECTED_KEY = 'forfait.wallet.disconnected';
 
-const NETWORK_CONFIG = {
-  network: NETWORK as const,
-  mirrorNode: MIRROR_NODE,
-  rpcNode: RPC_NODE,
+const wasDisconnected = (): boolean => {
+  try {
+    return localStorage.getItem(DISCONNECTED_KEY) === '1';
+  } catch {
+    return false;
+  }
 };
 
-
-// Bentuk jamak — inilah yang benar-benar dibaca SDK.
-// `configuration` sendirian menghasilkan factoryId/resolverId kosong.
-const FULL_CONFIG = {
-  ...NETWORK_CONFIG,
-  configuration:  { factoryAddress: FACTORY, resolverAddress: RESOLVER },
-  mirrorNodes:    { nodes: [{ mirrorNode: MIRROR_NODE, environment: NETWORK }] },
-  jsonRpcRelays:  { nodes: [{ jsonRpcRelay: RPC_NODE,  environment: NETWORK }] },
-  factories:      { factories: [{ factory: FACTORY,   environment: NETWORK }] },
-  resolvers:      { resolvers: [{ resolver: RESOLVER, environment: NETWORK }] },
+const rememberDisconnected = (v: boolean): void => {
+  try {
+    if (v) localStorage.setItem(DISCONNECTED_KEY, '1');
+    else localStorage.removeItem(DISCONNECTED_KEY);
+  } catch {
+    /* storage disabled — the choice just will not survive a reload */
+  }
 };
-
-const BOND_ID = "0.0.10373584";
-const FUNDER_ID = "0.0.10377457";
-const ISSUER_ID = "0.0.10085748";
-
-const ROLES = {
-  ISSUER:            '0x5eeaf5602c75bf26e73b5206d0bd6ee82f621166255e5fd73cc06bc7bd84a95f',
-  PAUSER:            '0x3cb8b459fdb6e7dc3d2a2aa529e530f885d45e03584adb438423209c86a2731f',
-  CONTROLLIST:       '0x6ed9a91e996c6475ecdc28ecbdbe9bd1122fc62b30cdbe6da8271884b51ec74d',
-  MATURITY_REDEEMER: '0x433f48f8aca23480f6ab07666cbc9131d32a0b4672033453f65e18f4dd390523',
-} as const;
 
 export default function App() {
-  const [log, setLog] = useState<string[]>([]);
-  const [account, setAccount] = useState<string>("");
+  const [conn, setConn] = useState<Connection | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState('');
+  const [tab, setTab] = useState<Tab>('issue');
 
-  const say = (msg: string) => setLog((prev) => [...prev, msg]);
-
-  // ── 1. Init + connect MetaMask
- async function connect() {
-  try {
-    const eth = (window as any).ethereum;
-    if (!eth) { say('MetaMask tidak ditemukan'); return; }
-
-    const accounts = await eth.request({ method: 'eth_requestAccounts' });
-    say(`MetaMask: ${accounts[0]}`);
-
-    const walletEvents = {
-      walletFound: (e: any) => console.log('walletFound', e),
-      walletConnectionStatusChanged: (e: any) => console.log('statusChanged', e),
-      walletDisconnect: (e: any) => console.log('disconnect', e),
-      walletPaired: (e: any) => {
-        console.log('walletPaired', e);
-        const id = e?.data?.account?.id?.value;
-        const net = e?.network;
-        say(`PAIRED: ${id} | factory=${net?.factoryId} resolver=${net?.resolverId}`);
-        if (id && id !== '0.0.0') setAccount(id);
-      },
-    };
-
-    await Network.init(new InitializationRequest({
-      ...FULL_CONFIG,
-      events: walletEvents,
-    } as any));
-    say('Network initialised');
-
-    const wallet = await Network.connect(new ConnectRequest({
-      ...NETWORK_CONFIG,
-      wallet: SupportedWallets.METAMASK,
-    }));
-    say(`Connected: ${JSON.stringify(wallet)}`);
-  } catch (e) {
-    say(`ERROR ${String(e)}`);
-    console.error(e);
-  }
-}
-
-  // ── 2. Terbitkan bond
-  async function createBond() {
+  async function connect() {
+    setConnecting(true);
+    setError('');
+    rememberDisconnected(false);
     try {
-      const { Bond, CreateBondRequest } =
-        await import("@hashgraph/asset-tokenization-sdk");
-
-      const now = Date.now();
-      const start = now + 5 * 60 * 1000;
-      const maturity = start + 60 * 24 * 60 * 60 * 1000;
-
-      const request = new CreateBondRequest({
-        name: "Forfait Test Receivable",
-        symbol: "FRF01",
-        isin: "US9311421039", // ISIN valid dari dokumentasi — lihat catatan di bawah
-        decimals: 0,
-
-        isWhiteList: false,
-        erc20VotesActivated: false,
-        isControllable: true, // perlu untuk forced transfer / compliance nanti
-        arePartitionsProtected: false,
-        isMultiPartition: false,
-        clearingActive: false,
-        internalKycActivated: false, // matikan dulu untuk smoke test
-
-        currency: "0x555344", // 'USD'
-        numberOfUnits: "1",
-        nominalValue: "2000",
-        nominalValueDecimals: 2,
-        startingDate: String(start),
-        maturityDate: String(maturity),
-        regulationType: 1,
-        regulationSubType: 0,
-
-        diamondOwnerAccount: "0.0.10085748", // hedera account
-        externalPausesIds: [],
-        externalControlListsIds: [],
-        externalKycListsIds: [],
-        proceedRecipientsIds: [],
-        proceedRecipientsData: [],
-        countries: "ID,SG,MY,US,GB,FR,DE,JP,CN",
-        info: "Forfait cross-border receivable",
-        isCountryControlListWhiteList: false,
-
-        configId:
-          "0x0000000000000000000000000000000000000000000000000000000000000002",
-        configVersion: 1,
-      });
-
-      const response = await Bond.create(request);
-      say(`BOND CREATED: ${JSON.stringify(response)}`);
-      console.log(response);
+      setConn(await connectWallet());
     } catch (e) {
-      say(`ERROR ${String(e)}`);
-      console.error(e);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnecting(false);
     }
   }
 
-  // ── 3. Baca detail bond
-  async function readBond() {
-    try {
-      const { Security, GetSecurityDetailsRequest, GetSecurityHoldersRequest } =
-        await import("@hashgraph/asset-tokenization-sdk");
-
-      const info = await Security.getInfo(
-        new GetSecurityDetailsRequest({ securityId: BOND_ID }),
-      );
-      say(
-        `SUPPLY: ${JSON.stringify(info.totalSupply)} / ${JSON.stringify(info.maxSupply)}`,
-      );
-
-      const holders = await Security.getSecurityHolders(
-        new GetSecurityHoldersRequest({
-          securityId: BOND_ID,
-          start: 0,
-          end: 10,
-        } as any),
-      );
-      say(`HOLDERS: ${JSON.stringify(holders)}`);
-      console.log(info, holders);
-      say(`SUPPLY: ${info.totalSupply} / ${info.maxSupply} | paused=${info.paused}`);
-    } catch (e) {
-      say(`ERROR ${String(e)}`);
-      console.error(e);
-    }
+  /**
+   * Forgets the wallet in this app only.
+   *
+   * The SDK stays initialised in memory, which is harmless — every read is guarded on
+   * a live connection, so nothing can reach the ledger while this is null.
+   */
+  function disconnect() {
+    setConn(null);
+    setError('');
+    rememberDisconnected(true);
   }
 
-  async function issueUnits() {
-    try {
-      const { Security, IssueRequest } =
-        await import("@hashgraph/asset-tokenization-sdk");
-      const res = await Security.issue(
-        new IssueRequest({
-          securityId: BOND_ID,
-          targetId: ISSUER_ID,
-          amount: "1",
-        }),
-      );
-      say(`ISSUED: ${res.payload} tx=${res.transactionId}`);
-    } catch (e) {
-      say(`ERROR ${String(e)}`);
-      console.error(e);
-    }
-  }
+  /**
+   * Re-pairs after a page reload without prompting.
+   *
+   * The SDK's network configuration lives in memory, so a refresh leaves the whole app
+   * unable to read the ledger until a wallet pairs again. `eth_accounts` — unlike
+   * `eth_requestAccounts` — never opens MetaMask: a non-empty result means this origin
+   * is already authorised, and pairing again is silent.
+   *
+   * Failures here are deliberately quiet. The user did not ask for this, so the worst
+   * case should be the Connect button they would have seen anyway, not an error.
+   */
+  useEffect(() => {
+    (async () => {
+      if (wasDisconnected()) return;
 
-  async function transferToFunder() {
-    try {
-      const { Security, TransferRequest } =
-        await import("@hashgraph/asset-tokenization-sdk");
-      const res = await Security.transfer(
-        new TransferRequest({
-          securityId: BOND_ID,
-          targetId: FUNDER_ID,
-          amount: "1",
-        }),
-      );
-      say(`TRANSFERRED: ${res.payload} tx=${res.transactionId}`);
-    } catch (e) {
-      say(`ERROR ${String(e)}`);
-      console.error(e);
-    }
-  }
-
-  async function pauseSecurity() {
-  try {
-    const { Security, PauseRequest } = await import('@hashgraph/asset-tokenization-sdk');
-    const res = await Security.pause(new PauseRequest({ securityId: BOND_ID }));
-    say(`PAUSED: ${JSON.stringify(res)}`);
-  } catch (e) { say(`ERROR ${String(e)}`); console.error(e); }
-}
-
-async function unpauseSecurity() {
-  try {
-    const { Security, PauseRequest } = await import('@hashgraph/asset-tokenization-sdk');
-    const res = await Security.unpause(new PauseRequest({ securityId: BOND_ID }));
-    say(`UNPAUSED: ${JSON.stringify(res)}`);
-  } catch (e) { say(`ERROR ${String(e)}`); console.error(e); }
-}
-
-async function grantRoles() {
-  try {
-    const { Role, RoleRequest } = await import('@hashgraph/asset-tokenization-sdk');
-
-    for (const [label, role] of Object.entries(ROLES)) {
-      const res = await Role.grantRole(new RoleRequest({
-        securityId: BOND_ID,
-        targetId: ISSUER_ID,
-        role,
-      }));
-      say(`GRANTED ${label}: ${res.payload}`);
-    }
-  } catch (e) { say(`ERROR ${String(e)}`); console.error(e); }
-}
+      const eth = window.ethereum;
+      if (!eth) return;
+      try {
+        const accounts = (await eth.request({ method: 'eth_accounts' })) as string[];
+        if (accounts.length === 0) return;
+        setConnecting(true);
+        setConn(await connectWallet());
+      } catch {
+        /* leave the Connect button showing */
+      } finally {
+        setConnecting(false);
+      }
+    })();
+  }, []);
 
   return (
-    <div style={{ fontFamily: "monospace", padding: 24, lineHeight: 1.6 }}>
-      <h1>Forfait — ATS smoke test</h1>
-      <button onClick={connect}>1. Connect MetaMask</button>{" "}
-      <button onClick={readBond} disabled={!account}>
-        2. Read bond
-      </button>{" "}
-      <button onClick={grantRoles} disabled={!account}>
-        2b. Grant roles
-        </button>{" "}
-      <button onClick={issueUnits} disabled={!account}>
-        3. Issue
-      </button>{" "}
-      <button onClick={transferToFunder} disabled={!account}>
-        4. Transfer
-      </button>{" "}
-      <button onClick={pauseSecurity} disabled={!account}>
-        5. Pause
-      </button>{" "}
-      <button onClick={unpauseSecurity} disabled={!account}>
-        6. Unpause
-      </button>{" "}
-      <details style={{ marginTop: 16 }}>
-        <summary style={{ cursor: "pointer", color: "#a00" }}>
-          Buat bond baru (jangan disentuh)
-        </summary>
-        <button onClick={createBond} disabled={!account}>
-          Create bond
+    <div className="app">
+      <header className="top">
+        <div className="brand">
+          <h1>Forfait</h1>
+          <span className="tag">Non-recourse receivables financing</span>
+        </div>
+
+        {conn ? (
+          <WalletChip conn={conn} onDisconnect={disconnect} />
+        ) : (
+          <button className="primary" onClick={connect} disabled={connecting}>
+            {connecting ? 'Reconnecting…' : 'Connect wallet'}
+          </button>
+        )}
+      </header>
+
+      {error && <div className="verdict bad" style={{ marginBottom: 20 }}>{error}</div>}
+
+      <nav className="tabs">
+        <button aria-selected={tab === 'issue'} onClick={() => setTab('issue')}>
+          Raise a receivable
         </button>
-      </details>
-      <pre style={{ marginTop: 24, whiteSpace: "pre-wrap" }}>
-        {log.join("\n")}
-      </pre>
+        <button aria-selected={tab === 'fund'} onClick={() => setTab('fund')}>
+          Fund a receivable
+        </button>
+        <button aria-selected={tab === 'debug'} onClick={() => setTab('debug')}>
+          Diagnostics
+        </button>
+      </nav>
+
+      {/*
+        The receivable index is not passed down. Views subscribe to it directly through
+        useReceivables(), so issuing on one tab updates the other without App knowing
+        either of them exists. The only thing App still owns is which tab is showing —
+        and issuing jumps to the funding market, because that is the next thing anyone
+        who just tokenised an invoice wants to see.
+      */}
+      {tab === 'issue' && <IssueView conn={conn} onIssued={() => setTab('fund')} />}
+      {tab === 'fund' && <FundView conn={conn} />}
+      {tab === 'debug' && <DebugView conn={conn} />}
+    </div>
+  );
+}
+
+/**
+ * The paired account, with the SDK's network configuration a click away.
+ *
+ * One thing deliberately does not hide behind that click. If the configuration fails to
+ * apply, `factoryId` and `resolverId` come back empty and nothing complains: reads keep
+ * working, the app looks healthy, and every write then fails with an error naming
+ * something unrelated. That cost two days once — FRICTION.md #1 — so the badge itself
+ * turns into a warning. The detail is on demand; the alarm is not.
+ */
+function WalletChip({
+  conn,
+  onDisconnect,
+}: {
+  conn: Connection;
+  onDisconnect: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+
+  const misconfigured = !conn.factoryId || !conn.resolverId;
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onClick = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="wallet" ref={box}>
+      <button
+        className="wallet-chip"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title="Connection details"
+      >
+        <span className="mono">{conn.accountId}</span>
+        <span className={`badge ${misconfigured ? 'alert' : 'live'}`}>
+          {misconfigured ? 'Config error' : 'Hedera testnet'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="popover">
+          <dl className="summary">
+            <dt>Hedera account</dt>
+            <dd className="mono">
+              <a href={hashscan.account(conn.accountId)} target="_blank" rel="noreferrer">
+                {conn.accountId}
+              </a>
+            </dd>
+
+            <dt>EVM address</dt>
+            <dd className="mono small">{conn.evmAddress}</dd>
+
+            <dt>Factory</dt>
+            <dd className="mono">{conn.factoryId || '— empty —'}</dd>
+
+            <dt>Resolver</dt>
+            <dd className="mono">{conn.resolverId || '— empty —'}</dd>
+          </dl>
+
+          {misconfigured ? (
+            <div className="verdict bad" style={{ marginTop: 10 }}>
+              The SDK configuration did not apply. Reads will keep working and every write
+              will fail with an unrelated error. Reconnect; if it persists, check the
+              plural config arrays in <span className="mono">ats.ts</span>.
+            </div>
+          ) : (
+            <div className="verdict ok" style={{ marginTop: 10 }}>
+              Configuration applied. Writes should reach the ledger.
+            </div>
+          )}
+
+          <div className="popover-foot">
+            <button
+              className="ghost"
+              onClick={() => {
+                setOpen(false);
+                onDisconnect();
+              }}
+            >
+              Disconnect
+            </button>
+            <p className="note">
+              Forgets the wallet here only. MetaMask still lists this site under Connected
+              sites — revoke it there to withdraw access.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
