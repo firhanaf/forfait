@@ -33,7 +33,7 @@ import {
 } from "../lib/receivables";
 
 const FUNDER_ID = "0.0.10377457";
-const TEST_TERM_SECONDS = 300;
+const TEST_TERM_SECONDS = 480;
 
 export function DebugView({ conn }: { conn: Connection | null }) {
   const receivables = useReceivables();
@@ -280,6 +280,7 @@ export function DebugView({ conn }: { conn: Connection | null }) {
                   maturesAt: new Date(
                     Number(params.maturityDate) * 1000,
                   ).toLocaleTimeString(),
+                  maturityEpoch: params.maturityDate,
                 };
               })
             }
