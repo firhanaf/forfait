@@ -54,10 +54,11 @@ Platform ──schedules settlement─►  scripts/schedule-settlement.ts
                                        └──► Scheduled Tx    redeem at maturity,
                                                             executed by the network
 
-Funder ────────buys at discount─►  Forfait web
+Funder ────signs in with email──►  Privy embedded wallet
+                                       └──► pays the freelancer
 ```
 
-Three things are deliberately split apart.
+Four things are deliberately split apart.
 
 **The document is hashed in the browser; only the platform writes the trail.** The
 freelancer's machine computes the SHA-256 of the invoice and the file is never uploaded.
@@ -75,6 +76,12 @@ when the receivable is issued, and held by `setWaitForExpiry` until the maturity
 There is no cron job, no keeper bot, and nothing that has to stay running for sixty days
 and be trusted to still be running on the last one.
 
+**The two sides need different wallets, so they get different wallets.** Issuing an
+ERC-1400 security means signing contract calls, so the freelancer uses MetaMask. Paying
+for one does not, so the funder signs in with an email address and Privy provisions a
+wallet they never had to create. Forcing a seed phrase on someone who only wants to buy a
+receivable is how this kind of product loses the people it is for.
+
 ### What works today
 
 | Capability | How it behaves |
@@ -86,19 +93,20 @@ and be trusted to still be running on the last one.
 | Lifecycle audit trail on HCS | with the document hash, and tamper detection across a trail |
 | Document hashing in the browser | pinned byte-for-byte against the platform's own hashing |
 | Settlement at maturity | a scheduled transaction signed at issuance; the network executes it |
+| Funder payment from an email login | a Privy embedded wallet, created on sign-in, paying in HBAR |
 
 Demonstrated on testnet: schedule `0.0.10416050` redeemed security `0.0.10416012` eighteen
 milliseconds after its maturity, using the same gas as a manual redemption, with nobody
-signing anything at execution time.
+signing anything at execution time. Separately, `0.0.10418332` — a wallet that exists
+because someone typed an email address — paid `0.0.10085748` directly.
 
 ### Not built yet
 
 | Missing | Why it is not here |
 |---|---|
-| **Delivery-versus-payment** | The receivable moves in one direction; the funder's cash does not move in the same transaction. Real DvP needs an ATS hold with the platform as notary. Until then the button says *Release*, not *Fund*. |
-| **Privy embedded wallets** | The target user is a freelancer, not someone who wants to manage a seed phrase. Both wallets are MetaMask today. |
+| **Atomic delivery-versus-payment** | Both legs exist, but they are two transactions, not one. Either could complete without the other. Real DvP needs an ATS hold with the platform as notary, which is why the button says *Release* rather than *Fund*. |
 | **A platform verification UI** | `VERIFIED` is written by hand with the operator key. The workflow is designed; the interface is not. |
-| **Separate accounts per role** | One account is currently issuer, holder and platform at once. Production separates them — see [docs/actors.md](docs/actors.md). |
+| **A separate platform account** | The freelancer and the funder are now genuinely different identities with different wallets. The platform is not: one account still issues securities and owns the audit topic. See [docs/actors.md](docs/actors.md). |
 
 ### Why each piece
 
@@ -116,6 +124,11 @@ signing anything at execution time.
   `setWaitForExpiry`, so the network holds it until maturity and then executes it. An
   admin key is retained, because a disputed receivable must not settle on time and nothing
   else could stop it.
+- **Privy** — the funder's side of the trade, without the wallet onboarding. An embedded
+  wallet is provisioned on email sign-in and pays the freelancer directly on Hedera,
+  configured through viem's `defineChain` against the same relay the rest of the app uses.
+  The Hedera account behind that wallet does not exist until it receives its first
+  transfer, which is why balances treat a mirror-node 404 as zero rather than an error.
 - **Mirror Node REST API** — all reads. Free, and the only sane way to query history.
 
 ## Known limits
@@ -124,32 +137,52 @@ signing anything at execution time.
   and those expire after a maximum of 62 days, so a longer term could not settle in a
   single schedule. Longer terms would need a re-scheduling mechanism — see
   [Roadmap](#roadmap).
-- Testnet only.
+- Testnet only. The funder's payment leg is denominated in HBAR because testnet has no
+  stablecoin worth using; on mainnet it would be one, and the amount would be the real
+  proceeds rather than a demonstration figure.
 - Invoice verification is not a credit assessment. Establishing that a receivable is real is
   a different problem from establishing that the debtor will pay.
 - Automatic settlement still depends on a funded payer account. If the platform's balance
   is insufficient when the schedule fires, the scheduled transaction fails while the
-  schedule itself is recorded as having executed.
+  schedule itself is recorded as having executed. The network removes the operator from
+  the loop, not the treasury.
 
 ## Measured costs
 
-From my own testnet transactions, not from marketing material:
+From my own testnet transactions, not from marketing material.
 
 | Operation | HBAR | USD |
 |---|---|---|
 | Issue a receivable (ATS contract deployment) | 7.42171367 | **$0.586** |
-| HBAR/token transfer | 0.00124353 | $0.0001 |
+| Schedule settlement at maturity | 1.21100000 | $0.0998 |
+| Execute the scheduled redemption | 0.19160000 | $0.0158 |
+| Create a Hedera account by first transfer | 0.61610000 | $0.0508 |
+| EVM transfer through the JSON-RPC relay | 0.02205000 | $0.0018 |
+| Native HBAR/token transfer | 0.00124353 | $0.0001 |
 | HCS lifecycle message | 0.00211401 | $0.00017 |
 
-Issuance dominates because it deploys an EVM contract. Everything after it — status updates,
-transfers, settlement — costs a fraction of a cent.
-
-On a $2,000 invoice, total ledger cost is about **0.03% of face value**, against 2–3% for a
+A full lifecycle — issuance, transfer, two attestations, scheduling, and settlement —
+comes to roughly **$0.70**, or **0.035% of a $2,000 invoice**, against 2–3% for a
 conventional payment gateway. That ratio is why this works at ticket sizes banks ignore.
+
+Two of those rows are worth reading twice. Issuance dominates everything because it
+deploys an EVM contract. And an EVM transfer through the relay costs about twenty times a
+native one — the convenience of an Ethereum-shaped wallet is not free, it is just cheap.
+
+Account creation is charged to whoever sends the first transfer, not to the account's
+owner, so onboarding a funder by email costs the person funding them about five cents.
+That figure is derived: the first transfer cost 0.6382 ℏ and a later identical one cost
+0.02205 ℏ.
 
 Hedera prices fees in USD, so the HBAR amount moves with the exchange rate while the dollar
 cost holds. I measured the same transfer eight days apart at HBAR $0.0650 and $0.0804 — the
-dollar cost matched to four significant figures both times.
+dollar cost matched to four significant figures both times. The rows above were measured on
+8 September, at rates between $0.0804 and $0.0824.
+
+The fee also ignores the amount. A 1 ℏ transfer and a 100 ℏ transfer both cost exactly
+0.02205 ℏ, because the network charges for the transaction rather than its value. Ledger
+cost is therefore flat while invoice size is not: on a $20,000 receivable the same
+lifecycle is 0.0035% of face value rather than 0.035%.
 
 ## Roadmap
 
@@ -169,6 +202,9 @@ cd forfait
 npm install
 cp .env.example .env    # fill in Hedera testnet credentials
 ```
+
+The web app needs its own environment file at `apps/web/.env` with `VITE_PRIVY_APP_ID`.
+Vite reads that one; the root `.env` is for the Node scripts.
 
 ## AI usage
 
