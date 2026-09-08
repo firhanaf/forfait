@@ -208,9 +208,12 @@ export function toBondParams(invoice: Invoice, ownerAccountId: string) {
   const errors = validate(invoice);
   if (errors.length) throw new Error(errors.join("; "));
 
-  const start = Date.now() + 5 * 60 * 1000;
-  const maturity = invoice.dueAt.getTime();
-
+  // ATS stores these verbatim and compares them against block.timestamp, which is in
+  // seconds. Passing milliseconds is accepted silently at issuance and puts maturity
+  // roughly a thousand-fold into the future, so redemption reverts forever. Nothing
+  // warns; the only symptom is a revert with no reason. See FRICTION.md.
+  const start = Math.floor((Date.now() + 5 * 60 * 1000) / 1000);
+  const maturity = Math.floor(invoice.dueAt.getTime() / 1000);
   return {
     name: `Receivable ${invoice.reference}`,
     symbol: invoice.reference

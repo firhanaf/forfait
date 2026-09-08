@@ -174,16 +174,26 @@ describe("mapping to ATS", () => {
     expect(params.nominalValueDecimals).toBe(2);
   });
 
-  it("sets maturity to the invoice due date, in milliseconds", () => {
-    expect(params.maturityDate).toBe(
-      String(new Date("2026-10-31T00:00:00Z").getTime()),
+  it("sends timestamps in seconds, not milliseconds", () => {
+    const params = toBondParams(invoice(), "0.0.1");
+    // A seconds-epoch for any plausible maturity is ~1.8e9. Milliseconds would be
+    // ~1.8e12, which ATS accepts silently and stores verbatim — putting maturity
+    // roughly a thousand-fold into the future and making redemption revert forever.
+    expect(Number(params.maturityDate)).toBeLessThan(1e11);
+    expect(Number(params.startingDate)).toBeLessThan(1e11);
+  });
+
+  it("maps maturity to the invoice due date exactly", () => {
+    // The magnitude check above catches the class of error; this catches the value.
+    expect(Number(params.maturityDate)).toBe(
+      Math.floor(invoice().dueAt.getTime() / 1000),
     );
-    // Seconds would land in 1970 and be rejected. See FRICTION.md #4.
-    expect(Number(params.maturityDate)).toBeGreaterThan(1_000_000_000_000);
   });
 
   it("starts in the future, so validation cannot race the clock", () => {
-    expect(Number(params.startingDate)).toBeGreaterThan(Date.now());
+    expect(Number(params.startingDate)).toBeGreaterThan(
+      Math.floor(Date.now() / 1000),
+    );
   });
 
   it("issues one indivisible unit", () => {

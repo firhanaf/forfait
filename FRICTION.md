@@ -3,7 +3,8 @@
 Kept while building Forfait during ETHOnline 2026. Every entry is something that cost real
 time and would cost the next developer the same. Written to be usable as upstream issues.
 
-Entries 1–11 cover the ATS SDK, 12 the monorepo, 13–16 the native Hedera SDK.
+Entries 1–11 cover the ATS SDK, 12 the monorepo, 13–16 the native Hedera SDK. If you read
+only one, read **#4** — it is the only failure here that reports nothing at all.
 
 ---
 
@@ -113,21 +114,103 @@ error above, which says nothing about wallet connection order.
 
 **Suggested fix:** document the ordering, or have `connect()` await wallet availability.
 
-### 4. Timestamps are milliseconds, but nothing says so
+### 4. Bond dates are seconds, and passing milliseconds is accepted but breaks maturity forever
 
-**Impact:** blocking, misleading error.
+**Impact:** blocking, silent, and permanent. Cost a morning, and every bond issued before
+it was found.
 
-`startingDate` and `maturityDate` are typed `string`. Passing Unix **seconds** yields:
+`startingDate` and `maturityDate` on `CreateBondRequest` are typed `string`. Nothing in
+the type, the field name, or the documentation says which unit. JavaScript's
+`Date.getTime()` returns milliseconds, so milliseconds is the natural guess.
+
+Milliseconds are accepted. The value is stored verbatim, and the contract then compares
+it against `block.timestamp`, which is in seconds.
+
+```ts
+// Accepted. Issuance succeeds, minting succeeds, HashScan shows a sensible date.
+maturityDate: String(invoice.dueAt.getTime())                      // 1793923200000
+
+// Correct.
+maturityDate: String(Math.floor(invoice.dueAt.getTime() / 1000))   // 1793923200
+```
+
+A bond meant to mature on 6 November 2026 instead matures around the year 58,800. It can
+never be redeemed, and nothing anywhere reports a problem.
+
+**What it looks like.** Issuance, role grants and minting all succeed. The security reads
+back correctly — name, ISIN, supply, holders. Redemption then fails with:
 
 ```
-Invalid Timestamp Wed Jan 21 1970 23:49:41 GMT+0700 (Indochina Time), outside range
+CALL_EXCEPTION  transaction execution reverted
+gasUsed:       78547
+error_message: 0xecb90424
+```
+
+A bare custom-error selector and no reason string. ATS ships no JSON ABIs, so the selector
+cannot be resolved to a name from the package, and it is not in the public 4-byte database.
+
+The ethers error compounds this: it reports `"data": ""` for the call, suggesting the SDK
+sent no call data at all. It did — the mirror node shows the real calldata. Chasing that
+first is a dead end.
+
+**How it was found.** Two failures, on different securities with different maturity dates,
+produced byte-identical gas usage: 78,547 both times. Identical gas means an identical
+execution path, so the failure could not depend on the maturity date or on elapsed time.
+That ruled out the obvious hypothesis before a day went into testing it.
+
+The answer was in the contract result on the mirror node, which records every storage slot
+the call read:
+
+```
+GET /api/v1/contracts/results/{transactionId}
+```
+
+```json
+"state_changes": [
+  { "contract_id": "0.0.10406673",
+    "slot": "0x1aa172d1ea72cd83510f1cf656de1afda1343aac6b18ede59e254f0b6b4e3000",
+    "value_read": "0x0000…000001a1ae27b400" }
+]
+```
+
+`0x1a1ae27b400` is 1,793,923,200,000. Against a `block.timestamp` of about 1,788,834,062
+that is three orders of magnitude out — and 1,793,923,200 *seconds* is exactly the
+intended maturity date. The number was right; the unit was not.
+
+**The technique generalises.** When a Hedera contract call reverts with nothing useful,
+`state_changes` shows what the contract actually read. Those values are the values you
+supplied, and recognising them in storage is usually faster than reasoning about what the
+contract might be checking.
+
+**Suggested fix.** A magnitude check when the request is constructed would cost one line
+and remove the whole class of error: a plausible maturity is around 1.8 × 10⁹, and 1.8 ×
+10¹² is not a date anyone means. Failing that, naming the field `maturityDateSeconds`, or
+saying so in the type's doc comment, would be enough.
+
+This is worth fixing above everything else in this log. Every other entry here announces
+itself with an error. This one issues successfully, reads back correctly, and fails months
+later — by which time every instrument issued in the meantime is already broken.
+
+**Verified.** `0.0.10415407`, issued with seconds from the diagnostics page and left to
+mature, redeemed successfully: supply 1 → 0, holders empty. `0.0.10415640`, issued through
+the normal sixty-day path, was accepted with seconds. `0.0.10404061`, `0.0.10406673` and
+`0.0.10415260`, all issued with milliseconds, are permanently unredeemable.
+
+**Unresolved.** An earlier version of this entry claimed the opposite — that seconds are
+rejected — on the strength of this error:
+
+```
+Invalid Timestamp Wed Jan 21 1970 23:49:41 GMT+0700, outside range
 [Wed Jan 21 1970 23:49:41 GMT+0700, Thu Jan 22 1970 01:16:05 GMT+0700]
 ```
 
-The value is being read as milliseconds. The error shows 1970 dates but never says "expected
-milliseconds".
-
-**Suggested fix:** document the unit, and detect second-scale values to emit a targeted hint.
+Those 1970 dates are second-scale values read as milliseconds, and the 86-minute width of
+that range is a 60-day term read the same way — so some validation layer does treat the
+input as milliseconds, which would make the SDK and the contract disagree with each other
+about the unit. That error has not been reproduced since, and issuance with seconds now
+succeeds through both the diagnostics and the normal path. Recorded here rather than
+dropped, because if a validator does read these as milliseconds it is a second defect
+sitting behind the first.
 
 ### 5. `regulationType` is typed optional but is required at runtime
 
