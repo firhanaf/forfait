@@ -7,19 +7,20 @@
 // freelancer from it. That is the whole argument for Privy here — the person financing a
 // $2,000 invoice should not have to become a wallet user first.
 //
-// Deliberately kept as one self-contained card. If Privy turns out not to work on this
-// network, deleting this file removes the integration entirely.
+// Identity lives in useFunder(), not here, because the same account has to receive the
+// receivable. Two sources of truth for who the funder is would let the security and the
+// cash end up with different people.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   useCreateWallet,
   useLoginWithEmail,
   usePrivy,
   useSendTransaction,
-  useWallets,
 } from "@privy-io/react-auth";
 import { hashscan } from "../lib/ats";
 import { formatMinor } from "../lib/domain";
+import type { Funder } from "../lib/funder";
 
 /**
  * What the funder actually sends on testnet.
@@ -41,21 +42,20 @@ const WEIBARS_PER_HBAR = 10n ** 18n;
  */
 const HBAR_USD = 0.0824;
 
-const MIRROR = "https://testnet.mirrornode.hedera.com/api/v1";
-
 export function FunderWallet({
+  funder,
   freelancerEvmAddress,
   proceedsMinor,
   currency,
   onPaid,
 }: {
+  funder: Funder;
   freelancerEvmAddress: string;
   proceedsMinor: number;
   currency: "USD" | "SGD" | "EUR";
   onPaid?: (txHash: string) => void;
 }) {
   const { ready, authenticated, user, logout } = usePrivy();
-  const { wallets } = useWallets();
   const { sendCode, loginWithCode } = useLoginWithEmail();
   const { sendTransaction } = useSendTransaction();
   const { createWallet } = useCreateWallet();
@@ -66,57 +66,8 @@ export function FunderWallet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [txHash, setTxHash] = useState("");
-  const [balance, setBalance] = useState<string | null>(null);
-  const [reads, setReads] = useState(0);
 
-  /**
-   * Strictly the embedded wallet.
-   *
-   * Falling back to wallets[0] would quietly show MetaMask's address and balance when
-   * no Privy wallet exists, with nothing on screen to say Privy was not involved at all.
-   */
-  const wallet = wallets.find((w) => w.walletClientType === "privy");
-  const address = wallet?.address ?? "";
-
-  /**
-   * The balance changes from outside this app — the funder tops the wallet up from a
-   * portal or another wallet, and nothing here would know. Re-reading when the tab
-   * regains focus catches exactly that: they have just come back from doing it.
-   */
-  useEffect(() => {
-    const refresh = () => setReads((n) => n + 1);
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, []);
-
-  // Read the balance from the mirror node rather than through the wallet, so the number
-  // on screen comes from the ledger and not from the SDK's view of it.
-  useEffect(() => {
-    if (!address) return;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const res = await fetch(`${MIRROR}/accounts/${address}`);
-        if (!res.ok) {
-          // A wallet that has never received HBAR has no Hedera account yet. That is
-          // not an error — Hedera creates the account on first receipt, so the address
-          // is usable before the account exists.
-          if (!cancelled) setBalance("0");
-          return;
-        }
-        const data = await res.json();
-        const tinybars = data?.balance?.balance ?? 0;
-        if (!cancelled) setBalance((tinybars / 1e8).toFixed(4));
-      } catch {
-        if (!cancelled) setBalance(null);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [address, txHash, reads]);
+  const { evmAddress, accountId, balance } = funder;
 
   /**
    * Unknown balance must not block the button. Only a balance that has actually been
@@ -150,6 +101,7 @@ export function FunderWallet({
         "";
 
       setTxHash(hash);
+      funder.refresh();
       onPaid?.(hash);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -172,7 +124,8 @@ export function FunderWallet({
       <h2>Pay the freelancer</h2>
       <p className="hint">
         The receivable moves through MetaMask. The money does not — a funder signs in
-        with an email address and pays from a wallet they never had to create.
+        with an email address and pays from a wallet they never had to create. The same
+        account receives the receivable, so both legs land on one identity.
       </p>
 
       {!authenticated ? (
@@ -257,7 +210,7 @@ export function FunderWallet({
         </div>
       ) : (
         <>
-          {!wallet && (
+          {!evmAddress && (
             <div className="verdict bad" style={{ marginBottom: 12 }}>
               No Privy wallet on this account yet.{" "}
               <button
@@ -286,12 +239,23 @@ export function FunderWallet({
 
             <dt>Wallet</dt>
             <dd className="mono small">
-              {address ? (
-                <a href={hashscan.account(address)} target="_blank" rel="noreferrer">
-                  {address}
+              {evmAddress ? (
+                <a href={hashscan.account(evmAddress)} target="_blank" rel="noreferrer">
+                  {evmAddress}
                 </a>
               ) : (
                 "none yet"
+              )}
+            </dd>
+
+            <dt>Hedera account</dt>
+            <dd className="mono">
+              {accountId ? (
+                <a href={hashscan.account(accountId)} target="_blank" rel="noreferrer">
+                  {accountId}
+                </a>
+              ) : (
+                "created on first transfer"
               )}
             </dd>
 
@@ -301,7 +265,7 @@ export function FunderWallet({
               <button
                 className="linklike"
                 style={{ marginLeft: 8 }}
-                onClick={() => setReads((n) => n + 1)}
+                onClick={funder.refresh}
               >
                 refresh
               </button>
@@ -322,7 +286,7 @@ export function FunderWallet({
           <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
             <button
               className="primary"
-              disabled={busy || !address || !freelancerEvmAddress || insufficient}
+              disabled={busy || !evmAddress || !freelancerEvmAddress || insufficient}
               onClick={send}
               title={
                 insufficient ? "Not enough HBAR — fund this wallet first" : undefined
@@ -342,7 +306,6 @@ export function FunderWallet({
                 resetLogin();
                 setEmail("");
                 setTxHash("");
-                setBalance(null);
               }}
             >
               Sign out
