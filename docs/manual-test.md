@@ -9,7 +9,8 @@ during this build, so every write here is followed by a read.
 **Preconditions**
 
 - MetaMask on Hedera Testnet (chain ID 296, RPC `https://testnet.hashio.io/api`)
-- Account `0.0.10085748` imported, funded with test HBAR
+- Account `0.0.10085748` imported, funded with at least 20 ℏ — a full pass issues three
+  securities, and issuance alone costs about 7.4 ℏ each
 - `TOPIC_ID` in `FundView.tsx` set to the topic from `scripts/audit-trail.ts create`
 - `npm run dev`
 
@@ -37,9 +38,12 @@ Recovers anything issued before the index existed, or from another machine.
 
 | | |
 |---|---|
-| **Do** | Diagnostics → *Register an existing security*: `0.0.10404061`, `INV-2026-0045`, the face value and term actually used, currency `USD` |
+| **Do** | Diagnostics → *Register an existing security*: `0.0.10415640`, `INV-2026-0047`, `2000.00`, USD, 60 days |
 | **Expect** | A row appears immediately in *Indexed receivables* |
 | **Verify** | Local Storage now holds `forfait.receivables.v1` with one entry whose fields match what was typed |
+
+Use `0.0.10415640` and not any earlier security. Anything issued before the timestamp fix
+carries a maturity in milliseconds and can never be redeemed — see FRICTION.md #4.
 
 **Negative cases.** Each must be refused with a message, and nothing added:
 
@@ -52,8 +56,8 @@ Recovers anything issued before the index existed, or from another machine.
 
 ## 3 — Reload with no wallet
 
-The case that used to throw. The SDK's network configuration lives in memory, so after a
-reload nothing can be read from the ledger until a wallet pairs again.
+The SDK's network configuration lives in memory, so after a reload nothing can be read from
+the ledger until a wallet pairs again.
 
 | | |
 |---|---|
@@ -79,10 +83,10 @@ re-pairs by itself after this, that flag is not being read and the button is dec
 |---|---|
 | **Do** | Connect the wallet. Then reload the page — do not touch MetaMask. |
 | **Expect** | The header shows *Reconnecting…* briefly, then the account id, with **no MetaMask popup**. Fund rows move from **Off-chain** to a live status on their own. |
-| **Verify** | Console shows a fresh `walletPaired` with non-empty `factoryId` and `resolverId` |
+| **Verify** | Click the account chip: factory `0.0.9213391`, resolver `0.0.9212226`, verdict green |
 
-Empty `factoryId` after a reconnect means the configuration silently failed — FRICTION.md
-#1. Reads keep working, so this must be checked in the console, not inferred from the UI.
+An empty factory or resolver means the configuration silently failed — FRICTION.md #1.
+Reads keep working, so this must be checked deliberately, not inferred from the UI.
 
 ---
 
@@ -91,8 +95,7 @@ Empty `factoryId` after a reconnect means the configuration silently failed — 
 | | |
 |---|---|
 | **Do** | From a disconnected state, click **Connect wallet** |
-| **Expect** | Account ID appears in the header, linked to HashScan. Badge reads *Hedera testnet*. |
-| **Verify** | Console `walletPaired` carries `factoryId: 0.0.9213391`, `resolverId: 0.0.9212226` |
+| **Expect** | Account ID appears in the header. Badge reads *Hedera testnet*, not *Config error*. |
 
 **Negative case.** Switch MetaMask to Ethereum Mainnet and reconnect. Expect the error
 *"paired without a Hedera account"*, not a silent failure.
@@ -105,7 +108,7 @@ Empty `factoryId` after a reconnect means the configuration silently failed — 
 |---|---|
 | **Do** | Open **Fund a receivable** |
 | **Expect** | The row renders with the contract's own name and ISIN, plus supply and holder |
-| **Verify** | Open `hashscan.io/testnet/contract/0.0.10404061`. Name, symbol and ISIN must match the page exactly. |
+| **Verify** | Open `hashscan.io/testnet/contract/0.0.10415640`. Name, symbol and ISIN must match the page exactly. |
 
 The name and ISIN come from the contract, not the index. If they differ from the reference
 typed at issuance, the page is reading a different security.
@@ -119,6 +122,9 @@ typed at issuance, the page is reading a different security.
 | **Do** | Same tab, scroll to **Audit trail** |
 | **Expect** | Events listed in sequence order with status badges and document hashes |
 | **Verify** | `https://testnet.mirrornode.hedera.com/api/v1/topics/<TOPIC_ID>/messages?order=asc` — sequence numbers and hashes match one for one |
+
+Only `SUBMITTED` and `VERIFIED` are attested. Funding is read from the contract, not
+written to the topic — the ledger already proves it.
 
 ---
 
@@ -139,11 +145,24 @@ message rather than defaulting.
 
 ---
 
-## 9 — Pricing
+## 9 — Document hashing
 
 | | |
 |---|---|
-| **Do** | **Raise a receivable**. Face value `2000.00`, term 60 days. |
+| **Do** | **Raise a receivable** → drop `samples/INV-2026-0046.pdf` on the drop zone |
+| **Expect** | Before the drop, **Tokenise** is disabled with *an invoice document is required*. After it, a `sha256:` digest appears and the button enables. |
+| **Verify** | `npx tsx scripts/audit-trail.ts emit INV-2026-0046 SUBMITTED samples/INV-2026-0046.pdf` prints the **same hash, character for character** |
+
+Two independent implementations — WebCrypto in the browser, `node:crypto` on the server —
+over the same bytes. If they ever diverge, honest documents start reading as tampered.
+
+---
+
+## 10 — Pricing
+
+| | |
+|---|---|
+| **Do** | Face value `2000.00`, term 60 days |
 | **Expect** | Discount `$40.00`, paid today `$1,960.00`, return `12.41%` |
 | **Verify** | `1 − 0.12 × 60/360 = 0.98`, so `2000 × 0.98 = 1960`. Return: `(40/1960) × (365/60) = 12.41%` |
 
@@ -153,15 +172,13 @@ advanced. If the page shows exactly 12%, the effective-return calculation is wro
 **Boundary.** Set the due date 90 days out. Expect the 60-day validation message and both
 buttons disabled.
 
-**Zero.** Set face value `0`. Expect *face value must be positive*.
-
-**Currency.** Switch to `SGD`. Every amount on this tab must change symbol. Then issue one
-and confirm the Fund tab shows `SGD` too — the index carries the currency because the
-contract stores it hex-encoded and the app does not decode it yet.
+**Currency.** Switch to `SGD`. Every amount on this tab must change symbol, and the Fund
+tab must show `SGD` too — the index carries the currency because the contract stores it
+hex-encoded and the app does not decode it yet.
 
 ---
 
-## 10 — ISIN
+## 11 — ISIN
 
 | | |
 |---|---|
@@ -169,42 +186,27 @@ contract stores it hex-encoded and the app does not decode it yet.
 | **Expect** | ISIN updates, always 12 characters, always `XF` prefixed |
 | **Verify** | Paste into any ISIN check-digit validator. The final digit must be accepted. |
 
-`XF` is unassigned to any national numbering agency, so these cannot collide with a real
-security. That is deliberate and is stated in the UI.
-
 ---
 
-## 11 — Issue, end to end
-
-The whole point of the index: what is issued on one tab appears on another.
+## 12 — Issue, end to end
 
 | | |
 |---|---|
 | **Do** | Fill the form with a new reference, click **Tokenise receivable** |
 | **Expect** | Six MetaMask prompts — deploy, four role grants, the mint. The log names each. |
-| **Expect** | A green panel with the new security id linked to HashScan, and **View in funding market →** |
+| **Expect** | A green panel with the new security id and **View in funding market →** |
 | **Do** | Click it |
-| **Expect** | The Fund tab now lists two receivables, the new one first, status **Open** |
-| **Verify** | Diagnostics → select the new security → **Read state** → `totalSupply: "1"`, holders contains `0.0.10085748` |
+| **Expect** | The Fund tab lists the new receivable first, status **Open** |
+| **Verify** | Diagnostics → select it → **Read state** → `totalSupply: "1"`, holders contains `0.0.10085748` |
+| **Verify** | Mirror node: `/api/v1/contracts/{id}/results` — the newest `function_parameters` starts `0x18180262`, and no result carries an `error_message` |
+
+**Timestamps.** In the same mirror-node output, confirm the stored maturity is a
+ten-digit second-scale value. A thirteen-digit one is the milliseconds bug returning, and
+every bond issued would be unredeemable — FRICTION.md #4.
 
 **Interruption.** Reject the third prompt. Expect an `ERROR` line in the log, no green
-panel, and no new row on the Fund tab — a security that was deployed but never minted
-should not be offered to funders.
-
----
-
-## 12 — Roles
-
-Only needed on a security created outside `createReceivable`.
-
-| | |
-|---|---|
-| **Do** | Diagnostics → Grant roles |
-| **Expect** | Four wallet prompts, four `granted` lines |
-| **Verify** | Each transaction appears under the account's history on HashScan |
-
-Without `ISSUER`, issuing fails with *the account trying to perform the operation doesn't
-have the needed role*. Creating a security grants `DEFAULT_ADMIN_ROLE` only.
+panel, and no new row on the Fund tab — a security deployed but never minted should not be
+offered to funders.
 
 ---
 
@@ -213,9 +215,8 @@ have the needed role*. Creating a security grants `DEFAULT_ADMIN_ROLE` only.
 | | |
 |---|---|
 | **Do** | Fund tab → **Release** on an open receivable |
-| **Expect** | One MetaMask prompt. Status becomes **Funded**, the button disables, and a panel appears with the `audit-trail.ts emit … FUNDED` command. |
+| **Expect** | One MetaMask prompt. Status becomes **Funded**, and a panel appears with the `audit-trail.ts` command. |
 | **Verify** | Diagnostics → Read state → holders is now `0.0.10377457`, not the issuer |
-| **Verify** | HashScan shows the transfer transaction |
 
 **Not the holder.** Switch MetaMask to a different account and reload. Release must be
 disabled, with the tooltip *Only the current holder can release this receivable*. Only the
@@ -233,12 +234,81 @@ real delivery-versus-payment needs a hold with a notary.
 | **Do** | Unpause → Read state |
 | **Expect** | `paused: false`, Release enabled again |
 
-This is the compliance control a disputed receivable would use. Leaving the security paused
-blocks every later test, so always unpause afterwards.
+Leaving the security paused blocks every later test, so always unpause afterwards.
 
 ---
 
-## 15 — Failure handling
+## 15 — Redemption at maturity
+
+Redemption cannot be observed on a sixty-day instrument, which is why it went untested for
+days. The diagnostics page issues one that matures in minutes.
+
+| | |
+|---|---|
+| **Do** | Diagnostics → **Create 8-minute bond**. Note `securityId` and `maturesAt`. |
+| **Do** | Before maturity, select it and click **Redeem at maturity** |
+| **Expect** | It **fails**. The bond is not yet mature, and the contract enforces that. |
+| **Do** | Wait past `maturesAt`, then click it again |
+| **Expect** | `{ ok: true, transactionId: … }` |
+| **Verify** | **Read state** → `totalSupply: "0"`, `holders: []` |
+
+Empty holders is the correct result, not a fault. Redemption burns the unit rather than
+moving it: the receivable is settled, so nothing remains to hold.
+
+The failing case is worth running deliberately. A revert here with `gasUsed: 78547` is the
+maturity check doing its job; the same gas figure on a *matured* bond would mean the
+timestamp bug has returned.
+
+---
+
+## 16 — Scheduled settlement
+
+The one nobody signs.
+
+| | |
+|---|---|
+| **Do** | Diagnostics → **Create 8-minute bond**. Note `securityId` and `maturityEpoch`. |
+| **Do** | Immediately: `npx tsx scripts/schedule-settlement.ts create <securityId> 0xf73bf13d1d76ec352ddb44ea0427bafa7658c012 <maturityEpoch>` |
+| **Expect** | A schedule id, an expiry two minutes after maturity, and call data beginning `0xd0db5fb2` |
+| **Do** | `npx tsx scripts/schedule-settlement.ts info <scheduleId>` |
+| **Expect** | `Wait expiry: true`, `Executed: not yet` |
+| **Do** | Wait past the expiry. **Touch nothing.** |
+| **Verify** | **Read state** → `totalSupply: "0"` |
+
+**`info` now fails, and that is the expected outcome.** Consensus removes a schedule from
+state once it executes, so `ScheduleInfoQuery` returns `INVALID_SCHEDULE_ID`. A query that
+worked five minutes ago failing is evidence the schedule fired, not that it broke.
+
+The history survives only on the mirror node:
+
+```
+GET /api/v1/schedules/<scheduleId>
+```
+
+```json
+{ "executed_timestamp": "1788840336.018659726",
+  "expiration_time":    "1788840336.000000000",
+  "wait_for_expiry": true, "deleted": false }
+```
+
+**Then confirm the call itself succeeded**, because an executed schedule only means the
+transaction was submitted:
+
+```
+GET /api/v1/contracts/<securityId>/results
+```
+
+The newest result must carry `error_message: null` and about 184,228 gas — the same figure
+as a manual redemption. A result with 78,547 gas is a revert wearing a successful
+schedule's clothes.
+
+**Timing.** Issuance takes six prompts and roughly ninety seconds, and a schedule cannot be
+created after its own expiry. An eight-minute term leaves comfortable margin; a five-minute
+one does not.
+
+---
+
+## 17 — Failure handling
 
 | | |
 |---|---|
@@ -248,6 +318,8 @@ blocks every later test, so always unpause afterwards.
 | **Expect** | Buttons disabled, with a note to connect first |
 | **Do** | Register a security id that does not exist, then open the Fund tab |
 | **Expect** | Status **Unavailable** and the error under that row only. Other rows keep working. |
+| **Do** | Switch tabs and come back to Diagnostics |
+| **Expect** | The log is still there. It survives unmounting; it is cleared only by reload. |
 
 ---
 
@@ -258,6 +330,9 @@ Recorded so the demo does not claim more than the build does.
 - **Release is one-sided.** It moves the receivable without taking the funder's cash in
   the same transaction. True DvP uses an ATS hold with the platform as notary — designed,
   not built. See `docs/actors.md`.
+- **Settlement still needs a funded payer.** If the platform's balance is short when the
+  schedule fires, the transaction fails while the schedule records as executed. The
+  network removes the operator from the loop, not the treasury.
 - **The index is per-browser.** Clearing site data hides receivables that still exist on
   the ledger; they can be re-registered under Diagnostics. Production indexes server-side
   from mirror-node events.
@@ -267,3 +342,6 @@ Recorded so the demo does not claim more than the build does.
   that topic, so writing from the browser would mean putting the operator key there.
 - **One account plays several roles.** `0.0.10085748` is issuer, holder and platform at
   once. Production separates them.
+- **Securities issued before the timestamp fix are unredeemable.** `0.0.10404061`,
+  `0.0.10406673` and `0.0.10415260` carry millisecond maturities. They are left on the
+  ledger as evidence for FRICTION.md #4 rather than hidden.
