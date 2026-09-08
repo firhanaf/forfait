@@ -146,6 +146,12 @@ because someone typed an email address — paid `0.0.10085748` directly.
   is insufficient when the schedule fires, the scheduled transaction fails while the
   schedule itself is recorded as having executed. The network removes the operator from
   the loop, not the treasury.
+- **The document check is a quality check, not a security control.** The file never
+  leaves the browser and nothing parses it, so there is no attack surface today. The
+  `%PDF` header check catches a photo dropped by mistake; it does not make a file safe,
+  and it defends nothing. Anything that later stores, parses or serves these documents
+  must validate them where it consumes them — an attacker posting to that endpoint never
+  opens this page.
 
 ## Measured costs
 

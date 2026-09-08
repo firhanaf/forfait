@@ -4,9 +4,13 @@
 // today, and tokenise it. The pricing panel updates as they type — the whole product is
 // the gap between the face value and what they can have now, so it should never be hidden
 // behind a button.
+//
+// Nothing turns red until someone has actually tried something. An empty document field
+// on a form you have only just opened is a starting state, not a mistake, and a form that
+// greets you in red teaches you to ignore red.
 
-import { useMemo, useRef, useState } from 'react';
-import { createReceivable, hashscan, type Connection } from '../lib/ats';
+import { useMemo, useRef, useState } from "react";
+import { createReceivable, hashscan, type Connection } from "../lib/ats";
 import {
   MAX_TERM_DAYS,
   discount,
@@ -16,9 +20,9 @@ import {
   toBondParams,
   validate,
   type Invoice,
-} from '../lib/domain';
-import { formatBytes, sha256OfFile } from '../lib/hash';
-import { addReceivable } from '../lib/receivables';
+} from "../lib/domain";
+import { formatBytes, sha256OfInvoice } from "../lib/hash";
+import { addReceivable } from "../lib/receivables";
 
 /** What a funder charges. Fixed here; a real deployment would price per debtor. */
 const ANNUAL_RATE = 0.12;
@@ -35,36 +39,41 @@ export function IssueView({
   /** Switches to the funding market. Called on request, not automatically. */
   onIssued?: () => void;
 }) {
-  const [reference, setReference] = useState('INV-2026-0046');
-  const [debtorName, setDebtorName] = useState('Acme Pte Ltd');
-  const [debtorCountry, setDebtorCountry] = useState('SG');
-  const [amount, setAmount] = useState('2000.00');
-  const [currency, setCurrency] = useState<Invoice['currency']>('USD');
+  const [reference, setReference] = useState("INV-2026-0046");
+  const [debtorName, setDebtorName] = useState("Acme Pte Ltd");
+  const [debtorCountry, setDebtorCountry] = useState("SG");
+  const [amount, setAmount] = useState("2000.00");
+  const [currency, setCurrency] = useState<Invoice["currency"]>("USD");
   const [issuedAt] = useState(today());
   const [dueAt, setDueAt] = useState(inDays(60));
 
-  const [documentHash, setDocumentHash] = useState('');
-  const [docName, setDocName] = useState('');
+  const [documentHash, setDocumentHash] = useState("");
+  const [docName, setDocName] = useState("");
   const [docSize, setDocSize] = useState(0);
   const [hashing, setHashing] = useState(false);
-  const [hashError, setHashError] = useState('');
+  const [hashError, setHashError] = useState("");
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [steps, setSteps] = useState<string[]>([]);
-  const [securityId, setSecurityId] = useState('');
+  const [securityId, setSecurityId] = useState("");
   const [busy, setBusy] = useState(false);
+
+  /** True once the user has asked for something. Until then, no red. */
+  const [attempted, setAttempted] = useState(false);
 
   async function takeFile(file: File | undefined) {
     if (!file) return;
     setHashing(true);
-    setHashError('');
+    setHashError("");
     try {
-      const digest = await sha256OfFile(file);
+      const digest = await sha256OfInvoice(file);
       setDocumentHash(digest);
       setDocName(file.name);
       setDocSize(file.size);
     } catch (e) {
+      // Leave any previously accepted document in place. Dropping the wrong file by
+      // mistake should not also discard the right one.
       setHashError(e instanceof Error ? e.message : String(e));
     } finally {
       setHashing(false);
@@ -72,17 +81,17 @@ export function IssueView({
   }
 
   function clearFile() {
-    setDocumentHash('');
-    setDocName('');
+    setDocumentHash("");
+    setDocName("");
     setDocSize(0);
-    setHashError('');
-    if (fileInput.current) fileInput.current.value = '';
+    setHashError("");
+    if (fileInput.current) fileInput.current.value = "";
   }
 
   const invoice = useMemo<Invoice>(
     () => ({
       reference,
-      issuerAccountId: conn?.accountId ?? '',
+      issuerAccountId: conn?.accountId ?? "",
       debtorName,
       debtorCountry,
       faceValueMinor: Math.round(Number(amount || 0) * 100),
@@ -90,32 +99,58 @@ export function IssueView({
       issuedAt: new Date(issuedAt),
       dueAt: new Date(dueAt),
       documentHash,
-      status: 'SUBMITTED',
+      status: "SUBMITTED",
     }),
-    [reference, conn, debtorName, debtorCountry, amount, currency, issuedAt, dueAt, documentHash]
+    [
+      reference,
+      conn,
+      debtorName,
+      debtorCountry,
+      amount,
+      currency,
+      issuedAt,
+      dueAt,
+      documentHash,
+    ],
   );
 
   const errors = validate(invoice);
   const days = termDays(invoice);
   const priced = days > 0 ? discount(invoice.faceValueMinor, days, ANNUAL_RATE) : null;
-  const blocked = !conn || errors.length > 0 || busy || hashing;
+
+  /**
+   * Disabled only when the action genuinely cannot run. An incomplete form leaves the
+   * button live: clicking it is how someone asks what is missing, and the answer comes
+   * back in the panel rather than in a tooltip — tooltips are unreachable on a touch
+   * screen and to anyone navigating by keyboard.
+   */
+  const blocked = !conn || busy || hashing;
+
+  const why = !conn
+    ? "Connect a wallet to issue"
+    : hashing
+      ? "Hashing the document…"
+      : undefined;
 
   function preview() {
-    if (!conn) return;
-    setSecurityId('');
+    setAttempted(true);
+    if (!conn || errors.length > 0) return;
+    setSecurityId("");
     setSteps([JSON.stringify(toBondParams(invoice, conn.accountId), null, 2)]);
   }
 
   async function tokenise() {
-    if (!conn) return;
+    setAttempted(true);
+    if (!conn || errors.length > 0) return;
+
     setBusy(true);
     setSteps([]);
-    setSecurityId('');
+    setSecurityId("");
     try {
       const id = await createReceivable(
         toBondParams(invoice, conn.accountId),
         conn.accountId,
-        (s) => setSteps((prev) => [...prev, s])
+        (s) => setSteps((prev) => [...prev, s]),
       );
       setSecurityId(id);
 
@@ -133,7 +168,10 @@ export function IssueView({
         createdAt: new Date().toISOString(),
       });
     } catch (e) {
-      setSteps((prev) => [...prev, `ERROR ${e instanceof Error ? e.message : String(e)}`]);
+      setSteps((prev) => [
+        ...prev,
+        `ERROR ${e instanceof Error ? e.message : String(e)}`,
+      ]);
     } finally {
       setBusy(false);
     }
@@ -156,7 +194,9 @@ export function IssueView({
           <div className="field">
             <label>ISIN</label>
             <input className="mono" value={syntheticIsin(reference)} readOnly />
-            <div className="note">Generated. Testnet identifiers are not NNA-allocated.</div>
+            <div className="note">
+              Generated. Testnet identifiers are not NNA-allocated.
+            </div>
           </div>
         </div>
 
@@ -189,7 +229,7 @@ export function IssueView({
             <label>Currency</label>
             <select
               value={currency}
-              onChange={(e) => setCurrency(e.target.value as Invoice['currency'])}
+              onChange={(e) => setCurrency(e.target.value as Invoice["currency"])}
             >
               <option>USD</option>
               <option>SGD</option>
@@ -207,16 +247,19 @@ export function IssueView({
             <label>Due</label>
             <input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} />
             <div className="note">
-              {days > 0 ? `${days} days` : '—'} · maximum {MAX_TERM_DAYS}
+              {days > 0 ? `${days} days` : "—"} · maximum {MAX_TERM_DAYS}
             </div>
           </div>
         </div>
 
         <div className="field">
-          <label>Invoice document</label>
+          <label>
+            Invoice document
+            {!documentHash && <span className="req">required</span>}
+          </label>
 
           <div
-            className={`drop${dragging ? ' over' : ''}`}
+            className={`drop${dragging ? " over" : ""}`}
             onDragOver={(e) => {
               e.preventDefault();
               setDragging(true);
@@ -252,13 +295,18 @@ export function IssueView({
             onChange={(e) => void takeFile(e.target.files?.[0])}
           />
 
-          {documentHash && (
+          {documentHash ? (
             <>
-              <input className="mono" value={documentHash} readOnly style={{ marginTop: 8 }} />
+              <input
+                className="mono"
+                value={documentHash}
+                readOnly
+                style={{ marginTop: 8 }}
+              />
               <div className="note">
                 Computed in this browser — the file is never uploaded. The platform
-                republishes this same hash to the audit trail via{' '}
-                <span className="mono">scripts/audit-trail.ts</span>.{' '}
+                republishes this same hash to the audit trail via{" "}
+                <span className="mono">scripts/audit-trail.ts</span>.{" "}
                 <button
                   className="linklike"
                   onClick={(e) => {
@@ -270,9 +318,18 @@ export function IssueView({
                 </button>
               </div>
             </>
+          ) : (
+            <div className="note">
+              The hash is what a funder checks the document against. Nothing can be
+              tokenised without one.
+            </div>
           )}
 
-          {hashError && <div className="verdict bad" style={{ marginTop: 8 }}>{hashError}</div>}
+          {hashError && (
+            <div className="verdict bad" style={{ marginTop: 8 }}>
+              {hashError}
+            </div>
+          )}
         </div>
       </section>
 
@@ -313,17 +370,19 @@ export function IssueView({
           <div className="empty">Enter a due date to see pricing.</div>
         )}
 
-        {errors.length > 0 && (
+        {/* Red is reserved for something that went wrong. Until someone has asked for
+            an action, an incomplete form is simply incomplete. */}
+        {attempted && errors.length > 0 && (
           <div className="verdict bad" style={{ marginTop: 8 }}>
-            {errors.join(' · ')}
+            {errors.join(" · ")}
           </div>
         )}
 
-        <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
-          <button className="primary" disabled={blocked} onClick={tokenise}>
-            {busy ? 'Working…' : 'Tokenise receivable'}
+        <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+          <button className="primary" disabled={blocked} onClick={tokenise} title={why}>
+            {busy ? "Working…" : "Tokenise receivable"}
           </button>
-          <button className="ghost" disabled={blocked} onClick={preview}>
+          <button className="ghost" disabled={blocked} onClick={preview} title={why}>
             Preview bond parameters
           </button>
         </div>
@@ -334,12 +393,16 @@ export function IssueView({
           </p>
         )}
 
-        {!conn && <p className="hint" style={{ marginTop: 10 }}>Connect a wallet to issue.</p>}
+        {!conn && (
+          <p className="hint" style={{ marginTop: 10 }}>
+            Connect a wallet to issue.
+          </p>
+        )}
 
         {securityId && (
           <div className="verdict ok" style={{ marginTop: 14 }}>
             <div>
-              Issued as{' '}
+              Issued as{" "}
               <a href={hashscan.contract(securityId)} target="_blank" rel="noreferrer">
                 {securityId}
               </a>
@@ -353,7 +416,9 @@ export function IssueView({
         )}
 
         {steps.length > 0 && (
-          <pre className="log" style={{ marginTop: 14 }}>{steps.join('\n')}</pre>
+          <pre className="log" style={{ marginTop: 14 }}>
+            {steps.join("\n")}
+          </pre>
         )}
       </section>
     </div>
