@@ -1,12 +1,12 @@
 // apps/web/src/App.tsx
-import { useEffect, useRef, useState } from 'react';
-import './styles.css';
-import { connectWallet, hashscan, type Connection } from './lib/ats';
-import { IssueView } from './views/IssueView';
-import { FundView } from './views/FundView';
-import { DebugView } from './views/DebugView';
+import { useEffect, useRef, useState } from "react";
+import "./styles.css";
+import { connectWallet, hashscan, type Connection } from "./lib/ats";
+import { IssueView } from "./views/IssueView";
+import { FundView } from "./views/FundView";
+import { DebugView } from "./views/DebugView";
 
-type Tab = 'issue' | 'fund' | 'debug';
+type Tab = "issue" | "fund" | "debug";
 
 /**
  * Set when the user disconnects on purpose.
@@ -16,11 +16,11 @@ type Tab = 'issue' | 'fund' | 'debug';
  * silent re-pair below would undo the click on the next reload, and the button would
  * look broken. So the intent is remembered here instead.
  */
-const DISCONNECTED_KEY = 'forfait.wallet.disconnected';
+const DISCONNECTED_KEY = "forfait.wallet.disconnected";
 
 const wasDisconnected = (): boolean => {
   try {
-    return localStorage.getItem(DISCONNECTED_KEY) === '1';
+    return localStorage.getItem(DISCONNECTED_KEY) === "1";
   } catch {
     return false;
   }
@@ -28,7 +28,7 @@ const wasDisconnected = (): boolean => {
 
 const rememberDisconnected = (v: boolean): void => {
   try {
-    if (v) localStorage.setItem(DISCONNECTED_KEY, '1');
+    if (v) localStorage.setItem(DISCONNECTED_KEY, "1");
     else localStorage.removeItem(DISCONNECTED_KEY);
   } catch {
     /* storage disabled — the choice just will not survive a reload */
@@ -38,12 +38,12 @@ const rememberDisconnected = (v: boolean): void => {
 export default function App() {
   const [conn, setConn] = useState<Connection | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState('');
-  const [tab, setTab] = useState<Tab>('issue');
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<Tab>("issue");
 
   async function connect() {
     setConnecting(true);
-    setError('');
+    setError("");
     rememberDisconnected(false);
     try {
       setConn(await connectWallet());
@@ -62,7 +62,7 @@ export default function App() {
    */
   function disconnect() {
     setConn(null);
-    setError('');
+    setError("");
     rememberDisconnected(true);
   }
 
@@ -84,7 +84,9 @@ export default function App() {
       const eth = window.ethereum;
       if (!eth) return;
       try {
-        const accounts = (await eth.request({ method: 'eth_accounts' })) as string[];
+        const accounts = (await eth.request({
+          method: "eth_accounts",
+        })) as string[];
         if (accounts.length === 0) return;
         setConnecting(true);
         setConn(await connectWallet());
@@ -99,30 +101,40 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <div className="brand">
-          <h1>Forfait</h1>
-          <span className="tag">Non-recourse receivables financing</span>
+        <div
+          className="brand"
+          style={{ display: "flex", alignItems: "center", gap: 10 }}
+        >
+          <img src="/logo-mark.svg" alt="" width={28} height={28} />
+          <div>
+            <h1>Forfait</h1>
+            <span className="tag">Non-recourse receivables financing</span>
+          </div>
         </div>
 
         {conn ? (
           <WalletChip conn={conn} onDisconnect={disconnect} />
         ) : (
           <button className="primary" onClick={connect} disabled={connecting}>
-            {connecting ? 'Reconnecting…' : 'Connect wallet'}
+            {connecting ? "Reconnecting…" : "Connect wallet"}
           </button>
         )}
       </header>
 
-      {error && <div className="verdict bad" style={{ marginBottom: 20 }}>{error}</div>}
+      {error && (
+        <div className="verdict bad" style={{ marginBottom: 20 }}>
+          {error}
+        </div>
+      )}
 
       <nav className="tabs">
-        <button aria-selected={tab === 'issue'} onClick={() => setTab('issue')}>
+        <button aria-selected={tab === "issue"} onClick={() => setTab("issue")}>
           Raise a receivable
         </button>
-        <button aria-selected={tab === 'fund'} onClick={() => setTab('fund')}>
+        <button aria-selected={tab === "fund"} onClick={() => setTab("fund")}>
           Fund a receivable
         </button>
-        <button aria-selected={tab === 'debug'} onClick={() => setTab('debug')}>
+        <button aria-selected={tab === "debug"} onClick={() => setTab("debug")}>
           Diagnostics
         </button>
       </nav>
@@ -134,9 +146,11 @@ export default function App() {
         and issuing jumps to the funding market, because that is the next thing anyone
         who just tokenised an invoice wants to see.
       */}
-      {tab === 'issue' && <IssueView conn={conn} onIssued={() => setTab('fund')} />}
-      {tab === 'fund' && <FundView conn={conn} />}
-      {tab === 'debug' && <DebugView conn={conn} />}
+      {tab === "issue" && (
+        <IssueView conn={conn} onIssued={() => setTab("fund")} />
+      )}
+      {tab === "fund" && <FundView conn={conn} />}
+      {tab === "debug" && <DebugView conn={conn} />}
     </div>
   );
 }
@@ -169,14 +183,14 @@ function WalletChip({
       if (!box.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === "Escape") setOpen(false);
     };
 
-    document.addEventListener('mousedown', onClick);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener('mousedown', onClick);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
     };
   }, [open]);
 
@@ -189,8 +203,8 @@ function WalletChip({
         title="Connection details"
       >
         <span className="mono">{conn.accountId}</span>
-        <span className={`badge ${misconfigured ? 'alert' : 'live'}`}>
-          {misconfigured ? 'Config error' : 'Hedera testnet'}
+        <span className={`badge ${misconfigured ? "alert" : "live"}`}>
+          {misconfigured ? "Config error" : "Hedera testnet"}
         </span>
       </button>
 
@@ -199,7 +213,11 @@ function WalletChip({
           <dl className="summary">
             <dt>Hedera account</dt>
             <dd className="mono">
-              <a href={hashscan.account(conn.accountId)} target="_blank" rel="noreferrer">
+              <a
+                href={hashscan.account(conn.accountId)}
+                target="_blank"
+                rel="noreferrer"
+              >
                 {conn.accountId}
               </a>
             </dd>
@@ -208,17 +226,18 @@ function WalletChip({
             <dd className="mono small">{conn.evmAddress}</dd>
 
             <dt>Factory</dt>
-            <dd className="mono">{conn.factoryId || '— empty —'}</dd>
+            <dd className="mono">{conn.factoryId || "— empty —"}</dd>
 
             <dt>Resolver</dt>
-            <dd className="mono">{conn.resolverId || '— empty —'}</dd>
+            <dd className="mono">{conn.resolverId || "— empty —"}</dd>
           </dl>
 
           {misconfigured ? (
             <div className="verdict bad" style={{ marginTop: 10 }}>
-              The SDK configuration did not apply. Reads will keep working and every write
-              will fail with an unrelated error. Reconnect; if it persists, check the
-              plural config arrays in <span className="mono">ats.ts</span>.
+              The SDK configuration did not apply. Reads will keep working and
+              every write will fail with an unrelated error. Reconnect; if it
+              persists, check the plural config arrays in{" "}
+              <span className="mono">ats.ts</span>.
             </div>
           ) : (
             <div className="verdict ok" style={{ marginTop: 10 }}>
@@ -237,8 +256,8 @@ function WalletChip({
               Disconnect
             </button>
             <p className="note">
-              Forgets the wallet here only. MetaMask still lists this site under Connected
-              sites — revoke it there to withdraw access.
+              Forgets the wallet here only. MetaMask still lists this site under
+              Connected sites — revoke it there to withdraw access.
             </p>
           </div>
         </div>

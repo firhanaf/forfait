@@ -1,0 +1,23 @@
+<!--
+  apps/web/public/logo-gap-lockup.svg
+
+  Mark plus wordmark. Text is live rather than outlined, so export to PNG for anything
+  fixed — a submission page, a slide — where the letterforms must not shift.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 72" width="340" height="72"
+     role="img" aria-labelledby="forfait-gap-lockup-title">
+  <title id="forfait-gap-lockup-title">Forfait — non-recourse receivables financing</title>
+
+  <g transform="translate(6,10)">
+    <rect x="0" y="6" width="30" height="8" rx="1.2" fill="#0F172A"/>
+    <rect x="0" y="18" width="21" height="8" rx="1.2" fill="#0D9488"/>
+  </g>
+
+  <text x="52" y="42"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, sans-serif"
+        font-size="30" font-weight="600" letter-spacing="-0.6" fill="#0F172A">Forfait</text>
+
+  <text x="52" y="60"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, sans-serif"
+        font-size="12" letter-spacing="0.2" fill="#64748B">Non-recourse receivables financing</text>
+</svg>

@@ -1,4 +1,4 @@
-# Forfait 🧾
+<img src="apps/web/public/logo-lockup.svg" alt="Forfait" width="300">
 
 **Turn a 60-day invoice into cash today.**
 

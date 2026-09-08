@@ -1,0 +1,22 @@
+<!--
+  apps/web/public/logo-gap-mark.svg
+
+  Direction 1 — the gap.
+
+  Face value above, proceeds below. The difference in length is the discount, which is
+  the whole business.
+
+  The bars are drawn at roughly 70%, not the true 98% of a 60-day receivable. An honest
+  ratio would be two bars of visibly identical length, which communicates nothing. This
+  is a mark, not a chart.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-labelledby="forfait-gap-title">
+  <title id="forfait-gap-title">Forfait</title>
+
+  <!-- What the invoice is worth -->
+  <rect x="8" y="18" width="48" height="12" rx="1.5" fill="#0F172A"/>
+
+  <!-- What the freelancer receives today -->
+  <rect x="8" y="34" width="34" height="12" rx="1.5" fill="#0D9488"/>
+</svg>
