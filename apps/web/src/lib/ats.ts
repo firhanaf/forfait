@@ -26,6 +26,7 @@ export const RESOLVER = "0.0.9212226";
 export const FACTORY = "0.0.9213391";
 const NETWORK = "testnet";
 
+
 const MIRROR_NODE = {
   baseUrl: "https://testnet.mirrornode.hedera.com/api/v1/",
   apiKey: "",
@@ -381,4 +382,6 @@ export const hashscan = {
   contract: (id: string) => `https://hashscan.io/testnet/contract/${id}`,
   account: (id: string) => `https://hashscan.io/testnet/account/${id}`,
   topic: (id: string) => `https://hashscan.io/testnet/topic/${id}`,
+  transaction: (idOrHash: string) => `https://hashscan.io/testnet/transaction/${idOrHash}`,
+  schedule: (id: string) => `https://hashscan.io/testnet/schedule/${id}`,
 };

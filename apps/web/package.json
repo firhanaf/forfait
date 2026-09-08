@@ -12,8 +12,10 @@
   },
   "dependencies": {
     "@hashgraph/asset-tokenization-sdk": "^8.0.0",
+    "@privy-io/react-auth": "^3.40.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "viem": "^2.56.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
