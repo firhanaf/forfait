@@ -32,8 +32,20 @@ const client = Client.forTestnet().setOperator(operatorId, operatorKey);
 
 const MIRROR = process.env.MIRROR_NODE_URL ?? 'https://testnet.mirrornode.hedera.com/api/v1';
 
-/** Lifecycle of a receivable, in the order it can legally occur. */
-export const STATUSES = ['SUBMITTED', 'VERIFIED', 'FUNDED', 'PAID', 'SETTLED'] as const;
+/**
+ * The statuses Forfait attests to.
+ *
+ * Only off-chain facts belong here. `SUBMITTED` and `VERIFIED` are claims about
+ * documents and diligence that nothing else can prove.
+ *
+ * `FUNDED` and `SETTLED` are deliberately absent: the transfer and the redemption are
+ * already on the ledger, and the app reads them from the contract. Attesting to
+ * something the ledger proves would be a weaker claim wearing the same clothes.
+ *
+ * `PAID` — the debtor has paid — belongs here too, and joins the list when that flow
+ * exists. It is left out until then rather than declared early.
+ */
+export const STATUSES = ['SUBMITTED', 'VERIFIED'] as const;
 export type Status = (typeof STATUSES)[number];
 
 /**
