@@ -42,18 +42,22 @@ maturity.
 ## Architecture
 
 ```
-Freelancer ──submits invoice──►  Forfait web
-                                     │
-                                     ├──► ATS (ERC-1400)   issue bond, roles, transfer, pause
-                                     └──► Mirror Node      all reads
+Freelancer ──submits invoice────►  Forfait web
+                                       │
+                                       ├──► ATS (ERC-1400)  issue bond, roles, transfer, pause
+                                       └──► Mirror Node     all reads
 
-Platform  ──attests lifecycle──►  scripts/audit-trail.ts
-                                     └──► HCS topic        SUBMITTED · VERIFIED
+Platform ──attests lifecycle────►  scripts/audit-trail.ts
+                                       └──► HCS topic       SUBMITTED · VERIFIED
 
-Funder ───────buys at discount──►  Forfait web
+Platform ──schedules settlement─►  scripts/schedule-settlement.ts
+                                       └──► Scheduled Tx    redeem at maturity,
+                                                            executed by the network
+
+Funder ────────buys at discount─►  Forfait web
 ```
 
-Two things are deliberately split apart.
+Three things are deliberately split apart.
 
 **The document is hashed in the browser; only the platform writes the trail.** The
 freelancer's machine computes the SHA-256 of the invoice and the file is never uploaded.
@@ -66,6 +70,11 @@ documents and diligence, so they go to HCS. Funding is not: the transfer is alre
 ledger, and the app reads the holder from the contract rather than taking anyone's word
 for it. Attesting to something the ledger already proves would be weaker, not stronger.
 
+**Settlement is handed to the network, not to a process.** The redemption is signed once,
+when the receivable is issued, and held by `setWaitForExpiry` until the maturity date.
+There is no cron job, no keeper bot, and nothing that has to stay running for sixty days
+and be trusted to still be running on the last one.
+
 ### What works today
 
 | Capability | How it behaves |
@@ -76,13 +85,17 @@ for it. Attesting to something the ledger already proves would be weaker, not st
 | Pause and unpause | the compliance control a disputed receivable would use |
 | Lifecycle audit trail on HCS | with the document hash, and tamper detection across a trail |
 | Document hashing in the browser | pinned byte-for-byte against the platform's own hashing |
+| Settlement at maturity | a scheduled transaction signed at issuance; the network executes it |
+
+Demonstrated on testnet: schedule `0.0.10416050` redeemed security `0.0.10416012` eighteen
+milliseconds after its maturity, using the same gas as a manual redemption, with nobody
+signing anything at execution time.
 
 ### Not built yet
 
 | Missing | Why it is not here |
 |---|---|
 | **Delivery-versus-payment** | The receivable moves in one direction; the funder's cash does not move in the same transaction. Real DvP needs an ATS hold with the platform as notary. Until then the button says *Release*, not *Fund*. |
-| **Settlement at maturity via Scheduled Transactions** | The 60-day cap in `domain.ts` is derived from Hedera's 62-day scheduling ceiling, so the constraint is already honoured — the settlement that would use it is not written. |
 | **Privy embedded wallets** | The target user is a freelancer, not someone who wants to manage a seed phrase. Both wallets are MetaMask today. |
 | **A platform verification UI** | `VERIFIED` is written by hand with the operator key. The workflow is designed; the interface is not. |
 | **Separate accounts per role** | One account is currently issuer, holder and platform at once. Production separates them — see [docs/actors.md](docs/actors.md). |
@@ -98,16 +111,25 @@ for it. Attesting to something the ledger already proves would be weaker, not st
   consensus. The invoice document never touches the ledger; only its SHA-256 hash is
   published, so a funder can verify the document they were shown is the one that was
   financed without the commercial terms becoming public.
+- **Scheduled Transactions** — settlement without infrastructure. A
+  `ContractExecuteTransaction` calling redemption is scheduled at issuance with
+  `setWaitForExpiry`, so the network holds it until maturity and then executes it. An
+  admin key is retained, because a disputed receivable must not settle on time and nothing
+  else could stop it.
 - **Mirror Node REST API** — all reads. Free, and the only sane way to query history.
 
 ## Known limits
 
-- **Invoice terms are capped at 60 days.** Hedera scheduled transactions expire after a
-  maximum of 62 days, so anything longer cannot settle in a single schedule. Longer terms
-  would need a re-scheduling mechanism — see [Roadmap](#roadmap).
+- **Invoice terms are capped at 60 days.** Settlement is a Hedera scheduled transaction,
+  and those expire after a maximum of 62 days, so a longer term could not settle in a
+  single schedule. Longer terms would need a re-scheduling mechanism — see
+  [Roadmap](#roadmap).
 - Testnet only.
 - Invoice verification is not a credit assessment. Establishing that a receivable is real is
   a different problem from establishing that the debtor will pay.
+- Automatic settlement still depends on a funded payer account. If the platform's balance
+  is insufficient when the schedule fires, the scheduled transaction fails while the
+  schedule itself is recorded as having executed.
 
 ## Measured costs
 
