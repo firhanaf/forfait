@@ -210,22 +210,72 @@ offered to funders.
 
 ---
 
-## 13 — Release to a funder
+## 13 — The funder arrives
+
+There is no such thing as a default funder. The receivable goes to whoever has signed in,
+and until somebody has, it goes nowhere.
 
 | | |
 |---|---|
-| **Do** | Fund tab → **Release** on an open receivable |
-| **Expect** | One MetaMask prompt. Status becomes **Funded**, and a panel appears with the `audit-trail.ts` command. |
-| **Verify** | Diagnostics → Read state → holders is now `0.0.10377457`, not the issuer |
+| **Do** | Fund tab, with nobody signed in to Privy |
+| **Expect** | **Release** is disabled. Its tooltip reads *No funder signed in — sign in below to receive this receivable*. |
+| **Do** | *Pay the freelancer* → email → code → **Sign in** |
+| **Expect** | A wallet address appears. *Hedera account* reads **created on first transfer** until the wallet has been paid. |
+| **Do** | Send testnet HBAR to that address from another account, then click **refresh** |
+| **Expect** | Balance updates, and *Hedera account* now shows an id such as `0.0.10418332` |
+| **Expect** | **Release** is now enabled |
 
-**Not the holder.** Switch MetaMask to a different account and reload. Release must be
-disabled, with the tooltip *Only the current holder can release this receivable*. Only the
-holder can sign a transfer — which is why the button says Release rather than Fund, and why
-real delivery-versus-payment needs a hold with a notary.
+The first top-up costs about 0.6 ℏ more than later ones. Hedera creates the account on its
+first incoming transfer and charges the sender for it, which is what onboarding a funder by
+email actually costs.
+
+**Switching tabs.** Send HBAR from another window and come back without clicking refresh.
+The balance updates on its own — the card re-reads when the tab regains focus, because a
+wallet is topped up somewhere else and this app would otherwise never notice.
 
 ---
 
-## 14 — Pause and unpause
+## 14 — Release to that funder
+
+| | |
+|---|---|
+| **Do** | **Release** on an open receivable |
+| **Expect** | One MetaMask prompt. Status becomes **Funded**. |
+| **Verify** | Diagnostics → Read state → holders is the funder's Hedera account, the same id shown on the payment card |
+
+That last check is the point of the case. If holders shows any other account, a hardcoded
+funder has survived somewhere and the security and the cash are landing on different
+people.
+
+**Not the holder.** Switch MetaMask to a different account and reload. Release must be
+disabled, with the tooltip *Only the current holder can release this receivable*. Only the
+holder can sign a transfer — which is why the button says Release rather than Fund.
+
+---
+
+## 15 — Pay the freelancer
+
+| | |
+|---|---|
+| **Do** | On the payment card, click **Pay 100 ℏ** |
+| **Expect** | A Privy confirmation, then *Transaction complete*, then a HashScan link on the card |
+| **Verify** | Mirror node: `/api/v1/accounts/<funder address>` — the balance has dropped by slightly more than 100 ℏ |
+| **Verify** | The transaction on HashScan shows the funder's account as sender and the freelancer's as recipient |
+
+**Insufficient funds.** Sign in as a funder whose wallet holds less than 100 ℏ. The button
+must be disabled with *Not enough HBAR — fund this wallet first*, rather than letting the
+transaction fail on submission.
+
+**The fee ignores the amount.** Compare this transaction's fee with a 1 ℏ transfer: both
+are 0.02205 ℏ. The network charges for the transaction, not its value.
+
+**Nothing binds the two legs.** Releasing and paying are separate transactions and either
+can happen without the other. That is a real gap, recorded in Known gaps below — do not
+narrate this pair as delivery-versus-payment.
+
+---
+
+## 16 — Pause and unpause
 
 | | |
 |---|---|
@@ -238,7 +288,7 @@ Leaving the security paused blocks every later test, so always unpause afterward
 
 ---
 
-## 15 — Redemption at maturity
+## 17 — Redemption at maturity
 
 Redemption cannot be observed on a sixty-day instrument, which is why it went untested for
 days. The diagnostics page issues one that matures in minutes.
@@ -261,7 +311,7 @@ timestamp bug has returned.
 
 ---
 
-## 16 — Scheduled settlement
+## 18 — Scheduled settlement
 
 The one nobody signs.
 
@@ -308,7 +358,7 @@ one does not.
 
 ---
 
-## 17 — Failure handling
+## 19 — Failure handling
 
 | | |
 |---|---|
@@ -327,9 +377,12 @@ one does not.
 
 Recorded so the demo does not claim more than the build does.
 
-- **Release is one-sided.** It moves the receivable without taking the funder's cash in
-  the same transaction. True DvP uses an ATS hold with the platform as notary — designed,
-  not built. See `docs/actors.md`.
+- **Nothing binds the two legs.** The receivable moves and the cash moves, but as separate
+  transactions: either can complete without the other. True DvP uses an ATS hold with the
+  platform as notary — designed, not built. See `docs/actors.md`.
+- **The funder's payment is denominated in HBAR at a demonstration figure.** Testnet has
+  no stablecoin worth using, and the real proceeds would be tens of thousands of HBAR. The
+  card says so on screen rather than implying the amount is real.
 - **Settlement still needs a funded payer.** If the platform's balance is short when the
   schedule fires, the transaction fails while the schedule records as executed. The
   network removes the operator from the loop, not the treasury.
@@ -340,8 +393,10 @@ Recorded so the demo does not claim more than the build does.
   at issuance. The contract's `nominalValue` is authoritative and should replace them.
 - **HCS events are written by `scripts/audit-trail.ts`, not by the UI.** The platform owns
   that topic, so writing from the browser would mean putting the operator key there.
-- **One account plays several roles.** `0.0.10085748` is issuer, holder and platform at
-  once. Production separates them.
+- **The platform is still conflated with the issuer.** The freelancer and the funder are
+  now genuinely separate identities with separate wallets, but one key still issues
+  securities and owns the audit topic — so the party attesting is the party attested
+  about. Production separates them.
 - **Securities issued before the timestamp fix are unredeemable.** `0.0.10404061`,
   `0.0.10406673` and `0.0.10415260` carry millisecond maturities. They are left on the
   ledger as evidence for FRICTION.md #4 rather than hidden.
