@@ -18,7 +18,7 @@ import {
   type Connection,
   type SecurityInfo,
 } from "../lib/ats";
-import { discount, formatMinor } from "../lib/domain";
+import { discount, formatMinor, syntheticIsin } from "../lib/domain";
 import { useFunder, type Funder } from "../lib/funder";
 import { useReceivables, type Receivable } from "../lib/receivables";
 
@@ -152,7 +152,12 @@ function ReceivableRow({
             {receivable.securityId}
           </a>
         </td>
-        <td className="mono">{info?.isin ?? "—"}</td>
+        {/* Computed from the reference by the same function that produced the one on the
+    contract, so it is shown before a wallet confirms it. If the two ever differ,
+    that is a bug worth seeing. */}
+        <td className="mono">
+          {info?.isin ?? syntheticIsin(receivable.reference)}
+        </td>
         <td className="right">
           {formatMinor(receivable.faceValueMinor, receivable.currency)}
         </td>
@@ -165,7 +170,7 @@ function ReceivableRow({
         <td className="right">{receivable.termDays}d</td>
         <td className="right">
           {!conn ? (
-            <span className="badge">Off-chain</span>
+            <span className="badge">Connect to verify</span>
           ) : !info ? (
             <span className="badge">{error ? "Unavailable" : "Loading"}</span>
           ) : info.paused ? (
@@ -265,15 +270,15 @@ export function FundView({ conn }: { conn: Connection | null }) {
       <section className="card">
         <h2>Available receivables</h2>
         <p className="hint">
-          Terms are from issuance; supply, holder and paused state are read live from
-          each ATS contract on Hedera testnet.
+          Terms are from issuance; supply, holder and paused state are read live
+          from each ATS contract on Hedera testnet.
           {!conn && " Connect a wallet to read the on-chain state."}
         </p>
 
         {receivables.length === 0 ? (
           <div className="empty">
-            Nothing issued yet. Raise a receivable, or register an existing security id
-            under Diagnostics.
+            Nothing issued yet. Raise a receivable, or register an existing
+            security id under Diagnostics.
           </div>
         ) : (
           <table>
@@ -304,11 +309,12 @@ export function FundView({ conn }: { conn: Connection | null }) {
         )}
 
         <p className="hint" style={{ marginTop: 14 }}>
-          <strong>Release, not settlement.</strong> Both legs exist — the receivable
-          moves here, the cash moves below — but they are two transactions, and either
-          could complete without the other. True delivery-versus-payment uses an ATS hold
-          with the platform as notary, so neither leg can settle alone. That is designed,
-          not built — see <span className="mono">docs/actors.md</span>.
+          <strong>Release, not settlement.</strong> Both legs exist — the
+          receivable moves here, the cash moves below — but they are two
+          transactions, and either could complete without the other. True
+          delivery-versus-payment uses an ATS hold with the platform as notary,
+          so neither leg can settle alone. That is designed, not built — see{" "}
+          <span className="mono">docs/actors.md</span>.
         </p>
       </section>
 
@@ -317,10 +323,11 @@ export function FundView({ conn }: { conn: Connection | null }) {
           <h2>Released</h2>
           <p className="hint">
             {justFunded.r.reference} now sits with{" "}
-            <span className="mono">{funder.accountId}</span> — the account behind the
-            funder&apos;s emailed-in wallet. Nothing needs writing to the audit trail:
-            the transfer is already on the ledger, and this page reads the holder from
-            the contract rather than from anyone&apos;s claim about it.
+            <span className="mono">{funder.accountId}</span> — the account
+            behind the funder&apos;s emailed-in wallet. Nothing needs writing to
+            the audit trail: the transfer is already on the ledger, and this
+            page reads the holder from the contract rather than from
+            anyone&apos;s claim about it.
           </p>
           <p className="hint">
             Transaction <span className="mono">{justFunded.txId}</span>
@@ -340,9 +347,9 @@ export function FundView({ conn }: { conn: Connection | null }) {
       <section className="card">
         <h2>Audit trail</h2>
         <p className="hint">
-          Every state change is written to a Hedera Consensus Service topic with the
-          document hash. If the document changes after a funder has seen it, the trail
-          shows it.
+          Every state change is written to a Hedera Consensus Service topic with
+          the document hash. If the document changes after a funder has seen it,
+          the trail shows it.
         </p>
 
         {invoices.length > 1 && (
@@ -362,8 +369,8 @@ export function FundView({ conn }: { conn: Connection | null }) {
 
         {shown.length === 0 ? (
           <div className="empty">
-            No events. Set <span className="mono">TOPIC_ID</span> to the topic created by{" "}
-            <span className="mono">scripts/audit-trail.ts</span>.
+            No events. Set <span className="mono">TOPIC_ID</span> to the topic
+            created by <span className="mono">scripts/audit-trail.ts</span>.
           </div>
         ) : (
           <>
