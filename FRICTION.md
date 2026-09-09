@@ -3,7 +3,7 @@
 Kept while building Forfait during ETHOnline 2026. Every entry is something that cost real
 time and would cost the next developer the same. Written to be usable as upstream issues.
 
-Entries 1–11 cover the ATS SDK, 12 the monorepo, 13–16 the native Hedera SDK. If you read
+Entries 1–11 and 17 cover the ATS SDK, 12 the monorepo, 13–16 the native Hedera SDK. If you read
 only one, read **#4** — it is the only failure here that reports nothing at all.
 
 ---
@@ -282,28 +282,42 @@ An error occurred while creating the bond: Config Id not found in request
 The bond config ID is `0x…0002`. That value is only discoverable from
 `apps/ats/web/.env.example` inside the monorepo — not from the SDK or its documentation.
 
-### 9. Classes required by public methods are missing from the package barrel
+### 9. The package barrel omits things its own public API requires
 
-**Impact:** forces hardcoded constants or unusable methods in every integration.
+**Impact:** forces hardcoded constants, unusable methods, or unreachable features in
+every integration.
 
 `index.d.ts` re-exports `./port/in`, which in turn re-exports `./request`, `./response`
-and the individual ports. Three things public methods depend on fall outside that:
+and the individual ports. Four things that public functionality depends on fall outside
+that:
 
-| Class | Location | Needed for | Consequence |
+| Missing | Location | Needed for | Consequence |
 |---|---|---|---|
 | `SecurityRole` | `domain/context/security/` | every `grantRole`, `revokeRole`, `hasRole` | outside the exported `port/in` tree entirely; the 30+ role hashes must be copied out of `node_modules` by hand |
 | `SetConfigurationRequest` | `port/in/request/management/` | `Network.setConfig()` | under an exported path but absent from `request/index.d.ts`; TypeScript reports it missing from 269 exports, and `package.json` `exports` blocks the deep path, so the method cannot be called as designed |
 | `UnpauseRequest` | `port/in/request/security/operations/pause/` | `Security.unpause()` | same; `UnpauseRequest is not a constructor` at runtime |
+| **`ControlList`** | `port/in/security/controlList/` | `addToControlList`, `removeFromControlList`, `isAccountInControlList` | the **port class itself** is unexported. `ControlListRequest` *is* exported, so a consumer can construct the request and then find nothing to pass it to |
 
-`Security.unpause()` does accept a `PauseRequest`, which is exported — but nothing documents
-that, and the missing class is what a consumer reaches for first.
+The last one is the sharpest. `ControlListRequest` appears in the barrel's export list
+alongside 250-odd others, which reads as a supported feature. The class that consumes it
+is not exported from `port/in/index.ts`, not re-exported from the package index, and not
+mixed into `Security` — so allow and deny lists, a compliance control the product page
+advertises, cannot be reached from a published import at all.
+
+`Security.unpause()` does accept a `PauseRequest`, which is exported, so that one has a
+workaround. Control lists have none.
 
 A related case worth separating: `EventParameter<'walletPaired'>` **is** exported, but does
 not describe the payload. The reference implementation in `apps/ats/web` casts it to `any`
 before reading it, so consumers must declare the shape themselves either way.
 
-**Suggested fix:** re-export the missing request classes from `port/in/request/index.ts`,
-export `SecurityRole`, and give the event payloads real types.
+**Suggested fix.** The individual omissions are each a one-line export, but the pattern
+matters more than the instances. Four separate features are unreachable for the same
+reason, which suggests nothing checks the barrel against the API surface. A test that
+imports the package the way a consumer does — from the published entry point, not by
+deep path — and constructs one request and one port per feature would have caught all
+four.
+
 
 ### 10. Exported types do not match the shapes actually returned
 
@@ -354,6 +368,48 @@ which surfaces as a Hedera ID format error about `""`, several layers from its o
 
 **Suggested fix:** reject with a described error, and surface configuration state in the
 messages that depend on it.
+
+### 17. The ESM build cannot be imported by Node
+
+**Impact:** blocking for any use outside a bundler. Found while trying to enumerate the
+package's exports from a one-line script.
+
+```js
+await import("@hashgraph/asset-tokenization-sdk");
+```
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module
+  .../build/esm/src/port/in/index
+imported from .../build/esm/src/index.js
+```
+
+The file exists — as `index.js`. ESM requires fully specified specifiers, and the emitted
+build imports `./port/in/index` with no extension. Node refuses it; a bundler does not,
+because bundler resolution still probes for extensions.
+
+So the package works in Vite, webpack and anything else that resolves like CommonJS, and
+fails the moment it is loaded by the runtime its own directory name claims to target.
+
+**Why this is worth more than it looks.** A tokenization SDK is not only a front-end
+concern. Issuing securities from a backend, running a keeper, scheduling settlement,
+writing an integration test in Node — all of it needs a plain `import`, and none of it is
+possible today without putting a bundler in the path. In this project every server-side
+script had to use the native Hedera SDK instead, and the parts that genuinely needed ATS
+had to stay in the browser.
+
+It also makes the package hard to inspect. Listing what a library exports is the first
+thing anyone does when the documentation is thin, and here that fails before it starts —
+which is how entries 9 and 10 in this log ended up being written by reading `.d.ts` files
+by hand.
+
+**Workaround.** Load it through something with bundler-style resolution — `tsx`,
+`vite-node`, or a bundle step. There is no way to make plain `node` import it.
+
+**Suggested fix.** Emit `.js` extensions in the ESM output. With TypeScript that means
+`"module": "node16"` or `"nodenext"`, which makes the compiler enforce specifiers at
+build time rather than leaving them to fail at import time. A single smoke test — `node
+-e 'import("@hashgraph/asset-tokenization-sdk")'` in CI — would keep it fixed.
 
 ---
 
