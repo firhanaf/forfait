@@ -29,6 +29,7 @@ import {
   addReceivable,
   clearReceivables,
   forgetReceivable,
+  restoreSeed,
   useReceivables,
 } from "../lib/receivables";
 
@@ -132,7 +133,17 @@ export function DebugView({ conn }: { conn: Connection | null }) {
             Clear index
           </button>
         )}
+
+        <button
+        className="ghost"
+        style={{ marginTop: 12, marginLeft: 8 }}
+        onClick={restoreSeed}
+      >
+        Restore demo data
+      </button>
       </section>
+
+      
 
       <section className="card">
         <h2>Direct SDK calls</h2>

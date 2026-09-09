@@ -95,7 +95,16 @@ function ReceivableRow({
     receivable.annualRate,
   );
 
-  const funded = !!funder.accountId && holders.includes(funder.accountId);
+  /**
+   * Redemption burns the unit, so a settled receivable has no supply and no holder —
+   * which read as "not funded" and displayed as Open. An indexed security has always
+   * been minted, because createReceivable throws before addReceivable if the mint
+   * fails, so zero supply here means redeemed rather than never issued.
+   */
+  const settled = !!info && Number(info.totalSupply) === 0;
+
+  const funded =
+    !settled && !!funder.accountId && holders.includes(funder.accountId);
   const heldByConnected = !!conn && holders.includes(conn.accountId);
 
   /** A receivable cannot be released to a funder who has not turned up. */
@@ -121,11 +130,13 @@ function ReceivableRow({
     }
   }
 
-  const blockedBecause = noFunder
-    ? "No funder signed in — sign in below to receive this receivable"
-    : !heldByConnected && conn && info && !funded
-      ? "Only the current holder can release this receivable"
-      : undefined;
+  const blockedBecause = settled
+    ? "This receivable was redeemed at maturity"
+    : noFunder
+      ? "No funder signed in — sign in below to receive this receivable"
+      : !heldByConnected && conn && info && !funded
+        ? "Only the current holder can release this receivable"
+        : undefined;
 
   return (
     <>
@@ -159,6 +170,8 @@ function ReceivableRow({
             <span className="badge">{error ? "Unavailable" : "Loading"}</span>
           ) : info.paused ? (
             <span className="badge alert">Paused</span>
+          ) : settled ? (
+            <span className="badge">Settled</span>
           ) : funded ? (
             <span className="badge done">Funded</span>
           ) : (
@@ -173,6 +186,7 @@ function ReceivableRow({
               !info ||
               info.paused ||
               funded ||
+              settled ||
               busy ||
               noFunder ||
               !heldByConnected
@@ -180,7 +194,13 @@ function ReceivableRow({
             onClick={fund}
             title={blockedBecause}
           >
-            {busy ? "Releasing…" : funded ? "Funded" : "Release"}
+            {busy
+              ? "Releasing…"
+              : settled
+                ? "Settled"
+                : funded
+                  ? "Funded"
+                  : "Release"}
           </button>
         </td>
       </tr>
@@ -298,13 +318,10 @@ export function FundView({ conn }: { conn: Connection | null }) {
           <p className="hint">
             {justFunded.r.reference} now sits with{" "}
             <span className="mono">{funder.accountId}</span> — the account behind the
-            funder&apos;s emailed-in wallet. Record it on the audit trail; the
-            topic&apos;s submit key belongs to the platform, so this runs from the
-            server, not the browser:
+            funder&apos;s emailed-in wallet. Nothing needs writing to the audit trail:
+            the transfer is already on the ledger, and this page reads the holder from
+            the contract rather than from anyone&apos;s claim about it.
           </p>
-          <pre className="log">
-            {`npx tsx scripts/audit-trail.ts emit ${justFunded.r.reference} VERIFIED <path-to-pdf>`}
-          </pre>
           <p className="hint">
             Transaction <span className="mono">{justFunded.txId}</span>
           </p>
