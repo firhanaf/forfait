@@ -28,8 +28,8 @@ failure that only appears in production, and only when someone tries to sign in.
 
 ## Why Solana packages are in the dependency tree
 
-`@solana/kit` and `@solana-program/system` are listed as dependencies. Forfait does not
-use Solana and never touches them at runtime.
+`@solana/kit`, `@solana-program/system`, `@solana-program/token` and
+`@hiero-ledger/proto` are listed as dependencies but never used at runtime.
 
 `@privy-io/react-auth` carries a Solana funding path behind optional peer dependencies.
 The dev server never bundles it, so it goes unnoticed locally. A production build has to
@@ -63,3 +63,24 @@ Splitting `Network.init` from `Network.connect` would let reads work for everyon
 initialisation is what reads need and pairing is what writes need. It is not done yet —
 that initialisation sequence is the most fragile part of this integration, and changing
 it deserves more than an evening. See FRICTION.md #1 through #3.
+
+## Verifying a build the way Vercel sees it
+
+Vercel builds with root directory `apps/web` and never installs the repository root, so
+anything hoisted there is invisible to it. Locally the opposite is true: Node resolution
+walks upwards, and `apps/web` quietly finds whatever the root has.
+
+That divergence cost two failed deploys. `@hiero-ledger/proto` is a dependency of
+`@hashgraph/hedera-wallet-connect`; it was present at the root for the scripts, so every
+local build passed while Vercel could not resolve it.
+
+To check honestly, hide the root install first:
+
+```sh
+mv node_modules node_modules.bak
+cd apps/web && npm run build
+cd .. && mv node_modules.bak node_modules
+```
+
+Ten seconds, and it removes the whole class of failure — rather than discovering it one
+package at a time through a two-minute deploy cycle.

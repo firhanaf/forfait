@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@hashgraph/asset-tokenization-sdk": "^8.0.0",
+    "@hiero-ledger/proto": "^2.31.0",
     "@privy-io/react-auth": "^3.40.0",
     "@solana-program/system": "^0.14.1",
     "@solana-program/token": "^0.16.1",
