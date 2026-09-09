@@ -284,6 +284,8 @@ The bond config ID is `0x…0002`. That value is only discoverable from
 
 ### 9. The package barrel omits things its own public API requires
 
+**Reported upstream:** [hashgraph/asset-tokenization-studio#1401](https://github.com/hashgraph/asset-tokenization-studio/issues/1401)
+
 **Impact:** forces hardcoded constants, unusable methods, or unreachable features in
 every integration.
 
@@ -370,6 +372,8 @@ which surfaces as a Hedera ID format error about `""`, several layers from its o
 messages that depend on it.
 
 ### 17. The ESM build cannot be imported by Node
+
+**Reported upstream:** [hashgraph/asset-tokenization-studio#1400](https://github.com/hashgraph/asset-tokenization-studio/issues/1400)
 
 **Impact:** blocking for any use outside a bundler. Found while trying to enumerate the
 package's exports from a one-line script.
