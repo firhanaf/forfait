@@ -161,6 +161,7 @@ export function IssueView({
       addReceivable({
         securityId: id,
         reference,
+        issuerAccountId: conn.accountId,
         faceValueMinor: invoice.faceValueMinor,
         currency,
         termDays: days,

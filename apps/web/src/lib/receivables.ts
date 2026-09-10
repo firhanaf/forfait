@@ -24,6 +24,15 @@ export interface Receivable {
   securityId: string;
   /** Invoice reference as the freelancer typed it, e.g. INV-2026-0045 */
   reference: string;
+  /**
+   * Who issued it.
+   *
+   * Needed to say whether a receivable has been sold without asking who is looking.
+   * "Funded" used to mean "held by the funder currently signed in", which made a sold
+   * receivable read as available to everyone else — including every judge who opens the
+   * deployed link. Whether the issuer still holds it is a fact about the receivable.
+   */
+  issuerAccountId: string;
   /** Face value in minor units. 100_000 is $1,000.00 */
   faceValueMinor: number;
   /**
@@ -58,6 +67,7 @@ const SEED: Receivable[] = [
   {
     securityId: "0.0.10431279",
     reference: "INV-2026-0048",
+    issuerAccountId: "0.0.10085748",
     faceValueMinor: 200000,
     currency: "USD",
     termDays: 60,
@@ -68,6 +78,7 @@ const SEED: Receivable[] = [
   {
     securityId: "0.0.10431227",
     reference: "INV-2026-0049",
+    issuerAccountId: "0.0.10085748",
     faceValueMinor: 350000,
     currency: "USD",
     termDays: 45,
@@ -80,6 +91,7 @@ const SEED: Receivable[] = [
   {
     securityId: "0.0.10416012",
     reference: "TEST-736288",
+    issuerAccountId: "0.0.10085748",
     faceValueMinor: 200000,
     currency: "USD",
     termDays: 1,

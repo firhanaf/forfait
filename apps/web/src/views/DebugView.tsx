@@ -11,17 +11,17 @@
 import { useState } from "react";
 import {
   ROLES,
+  createReceivable,
   getHolders,
   getSecurity,
   grantOperationalRoles,
   hashscan,
   issue,
   pause,
+  redeemAtMaturity,
   transfer,
   unpause,
-  redeemAtMaturity,
   type Connection,
-  createReceivable,
 } from "../lib/ats";
 import { formatMinor, toBondParams, type Invoice } from "../lib/domain";
 import { appendLog, clearLog, useLog } from "../lib/log";
@@ -75,9 +75,9 @@ export function DebugView({ conn }: { conn: Connection | null }) {
       <section className="card">
         <h2>Indexed receivables</h2>
         <p className="hint">
-          Held in this browser only. The ledger does not answer &ldquo;which
-          securities did I create&rdquo;, so the app has to remember. Forgetting
-          one here does not touch the contract.
+          Held in this browser only. The ledger does not answer &ldquo;which securities
+          did I create&rdquo;, so the app has to remember. Forgetting one here does not
+          touch the contract.
         </p>
 
         {receivables.length === 0 ? (
@@ -88,6 +88,7 @@ export function DebugView({ conn }: { conn: Connection | null }) {
               <tr>
                 <th>Reference</th>
                 <th>Security</th>
+                <th>Issuer</th>
                 <th className="right">Face value</th>
                 <th className="right"></th>
               </tr>
@@ -105,6 +106,9 @@ export function DebugView({ conn }: { conn: Connection | null }) {
                       {r.securityId}
                     </a>
                   </td>
+                  {/* Shown because a missing issuer is why a sold receivable would
+                      read as available, and that is invisible everywhere else. */}
+                  <td className="mono">{r.issuerAccountId || "— missing —"}</td>
                   <td className="right">
                     {formatMinor(r.faceValueMinor, r.currency)}
                   </td>
@@ -122,28 +126,19 @@ export function DebugView({ conn }: { conn: Connection | null }) {
           </table>
         )}
 
-        <RegisterExisting />
+        <RegisterExisting defaultIssuer={conn?.accountId ?? ""} />
 
-        {receivables.length > 0 && (
-          <button
-            className="ghost"
-            style={{ marginTop: 12 }}
-            onClick={clearReceivables}
-          >
-            Clear index
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          {receivables.length > 0 && (
+            <button className="ghost" onClick={clearReceivables}>
+              Clear index
+            </button>
+          )}
+          <button className="ghost" onClick={restoreSeed}>
+            Restore demo data
           </button>
-        )}
-
-        <button
-        className="ghost"
-        style={{ marginTop: 12, marginLeft: 8 }}
-        onClick={restoreSeed}
-      >
-        Restore demo data
-      </button>
+        </div>
       </section>
-
-      
 
       <section className="card">
         <h2>Direct SDK calls</h2>
@@ -151,9 +146,7 @@ export function DebugView({ conn }: { conn: Connection | null }) {
         <div className="field" style={{ maxWidth: 320 }}>
           <label>Security</label>
           <select value={target} onChange={(e) => setChosen(e.target.value)}>
-            {receivables.length === 0 && (
-              <option value="">Nothing indexed</option>
-            )}
+            {receivables.length === 0 && <option value="">Nothing indexed</option>}
             {receivables.map((r) => (
               <option key={r.securityId} value={r.securityId}>
                 {r.reference} · {r.securityId}
@@ -163,8 +156,8 @@ export function DebugView({ conn }: { conn: Connection | null }) {
         </div>
 
         <p className="hint">
-          Read after every write — a successful transaction is not the same as a
-          changed state.
+          Read after every write — a successful transaction is not the same as a changed
+          state.
         </p>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -186,11 +179,8 @@ export function DebugView({ conn }: { conn: Connection | null }) {
             disabled={disabled}
             onClick={() =>
               run("grant roles", async () => {
-                await grantOperationalRoles(
-                  target,
-                  conn!.accountId,
-                  (label, r) =>
-                    say(`   ${label} ${r.ok ? "granted" : "failed"}`),
+                await grantOperationalRoles(target, conn!.accountId, (label, r) =>
+                  say(`   ${label} ${r.ok ? "granted" : "failed"}`),
                 );
                 return { roles: Object.keys(ROLES) };
               })
@@ -202,9 +192,7 @@ export function DebugView({ conn }: { conn: Connection | null }) {
           <button
             className="ghost"
             disabled={disabled}
-            onClick={() =>
-              run("issue", () => issue(target, conn!.accountId, "1"))
-            }
+            onClick={() => run("issue", () => issue(target, conn!.accountId, "1"))}
           >
             Issue
           </button>
@@ -212,9 +200,7 @@ export function DebugView({ conn }: { conn: Connection | null }) {
           <button
             className="ghost"
             disabled={disabled}
-            onClick={() =>
-              run("transfer", () => transfer(target, FUNDER_ID, "1"))
-            }
+            onClick={() => run("transfer", () => transfer(target, FUNDER_ID, "1"))}
           >
             Transfer to funder
           </button>
@@ -238,10 +224,10 @@ export function DebugView({ conn }: { conn: Connection | null }) {
             className="ghost"
             disabled={!conn || busy}
             onClick={() =>
-              run("create 8-minute bond", async () => {
+              run(`create ${TEST_TERM_SECONDS / 60}-minute bond`, async () => {
                 // A receivable that matures while you watch. The UI cannot express this —
-                // validate() rejects a sub-day term, and should, because no real invoice has
-                // one. Redemption cannot be observed without it.
+                // validate() rejects a sub-day term, and should, because no real invoice
+                // has one. Redemption cannot be observed without it.
                 const reference = `TEST-${Date.now().toString().slice(-6)}`;
 
                 const invoice: Invoice = {
@@ -252,10 +238,10 @@ export function DebugView({ conn }: { conn: Connection | null }) {
                   faceValueMinor: 200_000,
                   currency: "USD",
                   issuedAt: new Date(),
-                  // A day out purely to satisfy validate(); the real maturity is set below.
+                  // A day out purely to satisfy validate(); the real maturity is below.
                   dueAt: new Date(Date.now() + 86_400_000),
-                  // A well-formed hash of nothing. Acceptable here precisely because this is
-                  // not a real receivable — never on the issuance path.
+                  // A well-formed hash of nothing. Acceptable here precisely because
+                  // this is not a real receivable — never on the issuance path.
                   documentHash: "sha256:" + "0".repeat(64),
                   status: "SUBMITTED",
                 };
@@ -277,6 +263,7 @@ export function DebugView({ conn }: { conn: Connection | null }) {
                 addReceivable({
                   securityId,
                   reference,
+                  issuerAccountId: conn!.accountId,
                   faceValueMinor: 200_000,
                   currency: "USD",
                   termDays: 1,
@@ -286,8 +273,8 @@ export function DebugView({ conn }: { conn: Connection | null }) {
 
                 return {
                   securityId,
-                  // Read back from what was sent, not recomputed. Two numbers that should agree
-                  // will eventually disagree.
+                  // Read back from what was sent, not recomputed. Two numbers that
+                  // should agree will eventually disagree.
                   maturesAt: new Date(
                     Number(params.maturityDate) * 1000,
                   ).toLocaleTimeString(),
@@ -330,9 +317,9 @@ export function DebugView({ conn }: { conn: Connection | null }) {
       <section className="card">
         <h2>Log</h2>
         <p className="hint">
-          Kept for the whole session — switching tabs no longer discards it.
-          Cleared on reload, and never written to storage: these lines carry
-          account ids and raw SDK payloads.
+          Kept for the whole session — switching tabs no longer discards it. Cleared on
+          reload, and never written to storage: these lines carry account ids and raw SDK
+          payloads.
         </p>
         {log.length === 0 ? (
           <div className="empty">Nothing yet.</div>
@@ -348,13 +335,14 @@ export function DebugView({ conn }: { conn: Connection | null }) {
  * Registers a security that exists on the ledger but not in this browser's index —
  * anything issued before the index existed, or issued from another machine.
  *
- * The terms are asked for rather than guessed. Face value and rate are not readable
- * from the contract in a form this app trusts yet, and inventing them would put a
- * number on screen that nothing backs.
+ * The terms are asked for rather than guessed. Face value, rate and issuer are not
+ * readable from the contract in a form this app trusts yet, and inventing them would
+ * put a number on screen that nothing backs.
  */
-function RegisterExisting() {
+function RegisterExisting({ defaultIssuer }: { defaultIssuer: string }) {
   const [securityId, setSecurityId] = useState("");
   const [reference, setReference] = useState("");
+  const [issuer, setIssuer] = useState("");
   const [faceValue, setFaceValue] = useState("");
   const [currency, setCurrency] = useState<Invoice["currency"]>("USD");
   const [termDays, setTermDays] = useState("60");
@@ -362,15 +350,24 @@ function RegisterExisting() {
 
   function submit() {
     setError("");
+
     if (!/^\d+\.\d+\.\d+$/.test(securityId.trim())) {
       setError("Security id must look like 0.0.10404061");
       return;
     }
+
+    const issuerId = issuer.trim() || defaultIssuer;
+    if (!/^\d+\.\d+\.\d+$/.test(issuerId)) {
+      setError("Issuer must look like 0.0.10085748 — connect a wallet, or type one");
+      return;
+    }
+
     const face = Math.round(Number(faceValue) * 100);
     if (!Number.isFinite(face) || face <= 0) {
       setError("Face value must be a positive amount");
       return;
     }
+
     const days = Number(termDays);
     if (!Number.isInteger(days) || days < 1 || days > 60) {
       setError("Term must be between 1 and 60 days");
@@ -380,6 +377,7 @@ function RegisterExisting() {
     addReceivable({
       securityId: securityId.trim(),
       reference: reference.trim() || securityId.trim(),
+      issuerAccountId: issuerId,
       faceValueMinor: face,
       currency,
       termDays: days,
@@ -389,6 +387,7 @@ function RegisterExisting() {
 
     setSecurityId("");
     setReference("");
+    setIssuer("");
     setFaceValue("");
   }
 
@@ -396,14 +395,9 @@ function RegisterExisting() {
     <div style={{ marginTop: 16 }}>
       <h3>Register an existing security</h3>
       <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          alignItems: "flex-end",
-        }}
+        style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}
       >
-        <div className="field" style={{ maxWidth: 180 }}>
+        <div className="field" style={{ maxWidth: 170 }}>
           <label>Security id</label>
           <input
             value={securityId}
@@ -411,7 +405,8 @@ function RegisterExisting() {
             placeholder="0.0.10404061"
           />
         </div>
-        <div className="field" style={{ maxWidth: 180 }}>
+
+        <div className="field" style={{ maxWidth: 170 }}>
           <label>Reference</label>
           <input
             value={reference}
@@ -419,7 +414,21 @@ function RegisterExisting() {
             placeholder="INV-2026-0045"
           />
         </div>
-        <div className="field" style={{ maxWidth: 140 }}>
+
+        {/* Whether the issuer still holds it is how the table knows a receivable has
+            been sold, so registering one means saying who issued it. Defaults to the
+            connected wallet, which is right for anything issued from this machine. */}
+        <div className="field" style={{ maxWidth: 150 }}>
+          <label>Issuer</label>
+          <input
+            className="mono"
+            value={issuer}
+            onChange={(e) => setIssuer(e.target.value)}
+            placeholder={defaultIssuer || "0.0.10085748"}
+          />
+        </div>
+
+        <div className="field" style={{ maxWidth: 130 }}>
           <label>Face value</label>
           <input
             className="num"
@@ -429,6 +438,7 @@ function RegisterExisting() {
             placeholder="2000.00"
           />
         </div>
+
         <div className="field" style={{ maxWidth: 100 }}>
           <label>Currency</label>
           <select
@@ -440,17 +450,17 @@ function RegisterExisting() {
             <option>EUR</option>
           </select>
         </div>
+
         <div className="field" style={{ maxWidth: 100 }}>
           <label>Term (days)</label>
-          <input
-            value={termDays}
-            onChange={(e) => setTermDays(e.target.value)}
-          />
+          <input value={termDays} onChange={(e) => setTermDays(e.target.value)} />
         </div>
+
         <button className="ghost" onClick={submit}>
           Register
         </button>
       </div>
+
       {error && (
         <div className="verdict bad" style={{ marginTop: 8 }}>
           {error}
