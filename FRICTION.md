@@ -3,7 +3,7 @@
 Kept while building Forfait during ETHOnline 2026. Every entry is something that cost real
 time and would cost the next developer the same. Written to be usable as upstream issues.
 
-Entries 1–11 and 17 cover the ATS SDK, 12 the monorepo, 13–16 the native Hedera SDK. If you read
+EEntries 1–11 and 17 cover the ATS SDK, 12 the monorepo, 13–16 the native Hedera SDK. If you read. If you read 
 only one, read **#4** — it is the only failure here that reports nothing at all.
 
 ---
@@ -414,6 +414,45 @@ by hand.
 `"module": "node16"` or `"nodenext"`, which makes the compiler enforce specifiers at
 build time rather than leaving them to fail at import time. A single smoke test — `node
 -e 'import("@hashgraph/asset-tokenization-sdk")'` in CI — would keep it fixed.
+
+### 18. The SDK cannot be configured without a wallet, so a page cannot read without one
+
+**Impact:** every consumer has to gate its whole read path on a browser extension.
+
+`Network.init()` rejects when no wallet is present:
+
+
+Reading a security's name, supply, holders or paused state needs a configured network. It
+does not need a signer, and nothing about `Security.getInfo` asks for one. But `init` is
+the only way to configure the network, and it refuses to complete without a wallet — so a
+read-only view is impossible. A visitor with no extension installed cannot be shown the
+state of an instrument that is already public on a public ledger.
+
+**What it cost.** A deployed application shows nothing on-chain to anyone who has not
+installed MetaMask, which is most people you send a link to. Anything derived locally
+still renders — terms, pricing, identifiers — and everything read from the contract does
+not.
+
+Splitting the two was attempted here and reverted:
+
+```ts
+export async function initReadOnly(): Promise<void> {
+  await Network.init(new InitializationRequest({ ...FULL_CONFIG, events: {} } as any));
+}
+```
+
+That is the whole change, and it fails at the first call. Recorded because the attempt
+looks obvious enough that the next person will try it too.
+
+**Suggested fix.** Separate configuring the network from pairing a wallet. `init` could
+resolve with the network configured and no signer attached, leaving `connect` to attach
+one — which is already a separate call, already documented as a separate step, and
+already the thing that reports wallet problems. Writes would keep failing exactly as they
+do today without a signer; reads would work for everyone.
+
+Related to #1397 from the opposite side. That one wants to sign without a browser; this
+one wants to read without signing. Both come from the same assumption — that anyone using
+the SDK is a person standing in front of a wallet.
 
 ---
 
